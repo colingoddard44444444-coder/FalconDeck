@@ -1,3 +1,4 @@
+import math
 import os
 import socket
 import tkinter as tk
@@ -8,13 +9,14 @@ from adsb import load_aircraft
 
 
 class Dashboard(tk.Frame):
-    def __init__(self, parent, show_radar, show_flights, show_map, close_app):
+    def __init__(self, parent, show_radar, show_flights, show_map, close_app, play_click=None):
         super().__init__(parent, bg=config.BACKGROUND, cursor="none")
 
         self.show_radar = show_radar
         self.show_flights = show_flights
         self.show_map = show_map
         self.close_app = close_app
+        self.play_click = play_click
         self.menu_cards = []
 
         self.build_interface()
@@ -108,6 +110,7 @@ class Dashboard(tk.Frame):
         ).pack(anchor="w", padx=12, pady=(9, 4))
 
         self.aircraft_status = self.status_row(status_panel, "AIRCRAFT")
+        self.nearest_status = self.status_row(status_panel, "NEAREST AIRCRAFT")
         self.receiver_status = self.status_row(status_panel, "ADS-B RECEIVER")
         self.network_status = self.status_row(status_panel, "NETWORK")
         self.location_status = self.status_row(status_panel, "LOCATION")
@@ -225,7 +228,9 @@ class Dashboard(tk.Frame):
         button = tk.Button(
             frame,
             text=title,
-            command=command if enabled else None,
+            command=(
+                lambda action=command: self.run_action(action)
+            ) if enabled else None,
             state="normal" if enabled else "disabled",
             bg=config.PANEL,
             fg=config.TEXT,
@@ -241,6 +246,22 @@ class Dashboard(tk.Frame):
             cursor="none",
         )
         button.pack(fill="both", expand=True)
+
+        if enabled:
+            button.bind(
+                "<ButtonPress-1>",
+                lambda event, card=frame: card.configure(
+                    highlightbackground="#FFFFFF",
+                    bg=config.PANEL_LIGHT,
+                ),
+            )
+            button.bind(
+                "<ButtonRelease-1>",
+                lambda event, card=frame: card.configure(
+                    highlightbackground=config.ACCENT,
+                    bg=config.PANEL,
+                ),
+            )
 
         tk.Label(
             frame,
@@ -260,6 +281,13 @@ class Dashboard(tk.Frame):
                 140 + (index * 135),
                 card.grid,
             )
+
+    def run_action(self, action):
+        if self.play_click:
+            self.play_click()
+
+        if action:
+            self.after(70, action)
 
     def update_clock(self):
         now = datetime.now(timezone.utc)
@@ -293,16 +321,52 @@ class Dashboard(tk.Frame):
         except (OSError, ValueError):
             return "--"
 
+    @staticmethod
+    def distance_nm(lat1, lon1, lat2, lon2):
+        radius_nm = 3440.065
+        p1 = math.radians(lat1)
+        p2 = math.radians(lat2)
+        dp = math.radians(lat2 - lat1)
+        dl = math.radians(lon2 - lon1)
+
+        value = (
+            math.sin(dp / 2) ** 2
+            + math.cos(p1)
+            * math.cos(p2)
+            * math.sin(dl / 2) ** 2
+        )
+
+        return radius_nm * 2 * math.atan2(
+            math.sqrt(value),
+            math.sqrt(1 - value),
+        )
+
     def update_status(self):
         try:
             aircraft = load_aircraft()
         except Exception:
             aircraft = []
 
-        positioned = sum(
-            1 for plane in aircraft
+        positioned_aircraft = [
+            plane for plane in aircraft
             if plane.has_position
-        )
+        ]
+        positioned = len(positioned_aircraft)
+
+        nearest = None
+        nearest_distance = None
+
+        for plane in positioned_aircraft:
+            distance = self.distance_nm(
+                config.HOME_LAT,
+                config.HOME_LON,
+                plane.latitude,
+                plane.longitude,
+            )
+
+            if nearest_distance is None or distance < nearest_distance:
+                nearest = plane
+                nearest_distance = distance
 
         receiver_running = os.path.exists(config.AIRCRAFT_JSON)
         network_online = self.wifi_connected()
@@ -313,6 +377,34 @@ class Dashboard(tk.Frame):
         self.aircraft_status.indicator.config(
             fg=config.SUCCESS if aircraft else config.DIM_TEXT
         )
+
+        if nearest is not None:
+            identity = (
+                nearest.callsign
+                or nearest.registration
+                or nearest.hex.upper()
+            )
+
+            altitude = (
+                f"{nearest.altitude:,.0f} FT"
+                if isinstance(nearest.altitude, (int, float))
+                else "ALT --"
+            )
+
+            self.nearest_status.config(
+                text=(
+                    f"{identity} • {nearest_distance:.1f} NM\n"
+                    f"{altitude}"
+                ),
+                fg=config.TEXT,
+            )
+            self.nearest_status.indicator.config(fg=config.ACCENT)
+        else:
+            self.nearest_status.config(
+                text="NO POSITIONED AIRCRAFT",
+                fg=config.DIM_TEXT,
+            )
+            self.nearest_status.indicator.config(fg=config.DIM_TEXT)
 
         self.receiver_status.config(
             text="ONLINE" if receiver_running else "OFFLINE",
