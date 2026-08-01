@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 import config
 from adsb import load_aircraft
+from airports import AIRPORTS
+from mini_radar import MiniRadar
 
 
 class Dashboard(tk.Frame):
@@ -109,6 +111,16 @@ class Dashboard(tk.Frame):
             font=("DejaVu Sans", 11, "bold"),
         ).pack(anchor="w", padx=12, pady=(9, 4))
 
+        self.mini_radar = MiniRadar(
+            status_panel,
+            range_nm=25,
+        )
+        self.mini_radar.pack(
+            fill="x",
+            padx=9,
+            pady=(0, 4),
+        )
+
         self.aircraft_status = self.status_row(status_panel, "AIRCRAFT")
         self.nearest_status = self.status_row(status_panel, "NEAREST AIRCRAFT")
         self.receiver_status = self.status_row(status_panel, "ADS-B RECEIVER")
@@ -168,7 +180,7 @@ class Dashboard(tk.Frame):
         row = tk.Frame(
             parent,
             bg=config.PANEL_LIGHT,
-            height=57,
+            height=42,
             cursor="none",
         )
         row.pack(fill="x", padx=9, pady=2)
@@ -347,6 +359,8 @@ class Dashboard(tk.Frame):
         except Exception:
             aircraft = []
 
+        self.mini_radar.update_aircraft(aircraft)
+
         positioned_aircraft = [
             plane for plane in aircraft
             if plane.has_position
@@ -367,6 +381,25 @@ class Dashboard(tk.Frame):
             if nearest_distance is None or distance < nearest_distance:
                 nearest = plane
                 nearest_distance = distance
+
+
+        nearest_airport = None
+        nearest_airport_distance = None
+
+        for airport in AIRPORTS:
+            distance = self.distance_nm(
+                config.HOME_LAT,
+                config.HOME_LON,
+                airport["lat"],
+                airport["lon"],
+            )
+
+            if (
+                nearest_airport_distance is None
+                or distance < nearest_airport_distance
+            ):
+                nearest_airport = airport
+                nearest_airport_distance = distance
 
         receiver_running = os.path.exists(config.AIRCRAFT_JSON)
         network_online = self.wifi_connected()
@@ -426,12 +459,26 @@ class Dashboard(tk.Frame):
             fg=config.SUCCESS if network_online else config.DANGER
         )
 
-        self.location_status.config(
-            text="BLETCHLEY, MILTON KEYNES"
-        )
-        self.location_status.indicator.config(
-            fg=config.ACCENT
-        )
+        if nearest_airport is not None:
+            self.location_status.config(
+                text=(
+                    f'{nearest_airport["icao"]} • '
+                    f'{nearest_airport["name"]}\n'
+                    f'{nearest_airport_distance:.1f} NM'
+                ),
+                fg=config.TEXT,
+            )
+            self.location_status.indicator.config(
+                fg=config.ACCENT
+            )
+        else:
+            self.location_status.config(
+                text="NO AIRPORT DATA",
+                fg=config.DIM_TEXT,
+            )
+            self.location_status.indicator.config(
+                fg=config.DIM_TEXT
+            )
 
         self.system_status.config(
             text=f"READY • CPU {self.cpu_temperature()}",
