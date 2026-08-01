@@ -1,6 +1,10 @@
 import shutil
 import subprocess
+import threading
+import wave
 import tkinter as tk
+from datetime import datetime
+from pathlib import Path
 
 import config
 
@@ -11,6 +15,14 @@ class AirbandScreen(tk.Frame):
         self.show_dashboard = show_dashboard
         self.rtl_process = None
         self.audio_process = None
+        self.audio_thread = None
+        self.recording = False
+        self.recording_file = None
+        self.wave_writer = None
+        self.recordings_dir = (
+            Path(__file__).resolve().parent / "recordings"
+        )
+        self.recordings_dir.mkdir(parents=True, exist_ok=True)
         self.volume_control = self.find_volume_control()
         self.volume = 70
         self.build_interface()
@@ -197,7 +209,14 @@ class AirbandScreen(tk.Frame):
             "STOP RECEIVER",
             self.stop_listening,
         )
-        self.stop_button.pack(fill="x", pady=(2, 6))
+        self.stop_button.pack(fill="x", pady=(2, 4))
+
+        self.record_button = self.control_button(
+            body,
+            "START RECORDING",
+            self.toggle_recording,
+        )
+        self.record_button.pack(fill="x", pady=(0, 6))
 
         self.message = tk.Label(
             body,
@@ -445,13 +464,16 @@ class AirbandScreen(tk.Frame):
                     "-r", "12000",
                     "-c", "1",
                 ],
-                stdin=self.rtl_process.stdout,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
 
-            if self.rtl_process.stdout:
-                self.rtl_process.stdout.close()
+            self.audio_thread = threading.Thread(
+                target=self.forward_audio,
+                daemon=True,
+            )
+            self.audio_thread.start()
 
             self.message.config(
                 text=f"LISTENING • {self.frequency:.3f} MHz AM",
@@ -470,6 +492,115 @@ class AirbandScreen(tk.Frame):
             self.message.config(
                 text=f"RECEIVER ERROR: {error}",
                 fg=config.DANGER,
+            )
+
+    def forward_audio(self):
+        try:
+            while (
+                self.rtl_process is not None
+                and self.audio_process is not None
+                and self.rtl_process.stdout is not None
+                and self.audio_process.stdin is not None
+            ):
+                chunk = self.rtl_process.stdout.read(4096)
+
+                if not chunk:
+                    break
+
+                try:
+                    self.audio_process.stdin.write(chunk)
+                    self.audio_process.stdin.flush()
+                except (BrokenPipeError, OSError):
+                    break
+
+                if self.recording and self.wave_writer is not None:
+                    try:
+                        self.wave_writer.writeframes(chunk)
+                    except (OSError, wave.Error):
+                        pass
+        finally:
+            if (
+                self.audio_process is not None
+                and self.audio_process.stdin is not None
+            ):
+                try:
+                    self.audio_process.stdin.close()
+                except OSError:
+                    pass
+
+    def toggle_recording(self):
+        if self.recording:
+            self.stop_recording()
+        else:
+            self.start_recording()
+
+    def start_recording(self):
+        if self.rtl_process is None:
+            self.message.config(
+                text="PRESS LISTEN BEFORE RECORDING",
+                fg=config.DANGER,
+            )
+            return
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        frequency = f"{self.frequency:.3f}".replace(".", "_")
+
+        self.recording_file = (
+            self.recordings_dir
+            / f"airband_{frequency}MHz_{timestamp}.wav"
+        )
+
+        try:
+            self.wave_writer = wave.open(
+                str(self.recording_file),
+                "wb",
+            )
+            self.wave_writer.setnchannels(1)
+            self.wave_writer.setsampwidth(2)
+            self.wave_writer.setframerate(12000)
+
+            self.recording = True
+            self.record_button.config(
+                text="STOP RECORDING",
+                bg=config.DANGER,
+                fg="white",
+            )
+            self.message.config(
+                text=f"RECORDING • {self.frequency:.3f} MHz",
+                fg=config.DANGER,
+            )
+        except (OSError, wave.Error) as error:
+            self.wave_writer = None
+            self.recording = False
+            self.message.config(
+                text=f"RECORDING ERROR: {error}",
+                fg=config.DANGER,
+            )
+
+    def stop_recording(self):
+        self.recording = False
+
+        if self.wave_writer is not None:
+            try:
+                self.wave_writer.close()
+            except (OSError, wave.Error):
+                pass
+
+        saved_file = self.recording_file
+        self.wave_writer = None
+        self.recording_file = None
+
+        if hasattr(self, "record_button"):
+            self.record_button.config(
+                text="START RECORDING",
+                bg=config.PANEL_LIGHT,
+                fg=config.ACCENT,
+            )
+
+        if saved_file is not None:
+            self.message.config(
+                text=f"SAVED • {saved_file.name}",
+                fg=config.SUCCESS,
             )
 
     def check_receiver(self):
@@ -508,6 +639,9 @@ class AirbandScreen(tk.Frame):
         )
 
     def stop_listening(self):
+        if self.recording or self.wave_writer is not None:
+            self.stop_recording()
+
         for process in (self.audio_process, self.rtl_process):
             if process is not None and process.poll() is None:
                 process.terminate()
