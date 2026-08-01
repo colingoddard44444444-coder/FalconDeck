@@ -156,6 +156,41 @@ class Dashboard(tk.Frame):
             ),
         )
 
+        self.open_map_button = tk.Button(
+            status_panel,
+            text="OPEN MOVING MAP",
+            command=lambda: self.run_action(self.show_map),
+            bg=config.PANEL_LIGHT,
+            fg=config.ACCENT,
+            activebackground=config.ACCENT,
+            activeforeground="#000000",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            cursor="none",
+        )
+        self.open_map_button.pack(
+            fill="x",
+            padx=9,
+            pady=(0, 4),
+        )
+
+        self.open_map_button.bind(
+            "<ButtonPress-1>",
+            lambda event: self.open_map_button.configure(
+                bg=config.ACCENT,
+                fg="#000000",
+            ),
+        )
+
+        self.open_map_button.bind(
+            "<ButtonRelease-1>",
+            lambda event: self.open_map_button.configure(
+                bg=config.PANEL_LIGHT,
+                fg=config.ACCENT,
+            ),
+        )
+
         self.aircraft_status = self.status_row(status_panel, "AIRCRAFT")
         self.nearest_status = self.status_row(status_panel, "NEAREST AIRCRAFT")
         self.receiver_status = self.status_row(status_panel, "ADS-B RECEIVER")
