@@ -334,6 +334,20 @@ class Dashboard(tk.Frame):
             return "--"
 
     @staticmethod
+    def bearing_degrees(lat1, lon1, lat2, lon2):
+        p1 = math.radians(lat1)
+        p2 = math.radians(lat2)
+        dl = math.radians(lon2 - lon1)
+
+        y = math.sin(dl) * math.cos(p2)
+        x = (
+            math.cos(p1) * math.sin(p2)
+            - math.sin(p1) * math.cos(p2) * math.cos(dl)
+        )
+
+        return (math.degrees(math.atan2(y, x)) + 360) % 360
+
+    @staticmethod
     def distance_nm(lat1, lon1, lat2, lon2):
         radius_nm = 3440.065
         p1 = math.radians(lat1)
@@ -424,10 +438,23 @@ class Dashboard(tk.Frame):
                 else "ALT --"
             )
 
+            aircraft_bearing = self.bearing_degrees(
+                config.HOME_LAT,
+                config.HOME_LON,
+                nearest.latitude,
+                nearest.longitude,
+            )
+
+            heading = (
+                f"{nearest.heading:.0f}°"
+                if isinstance(nearest.heading, (int, float))
+                else "--"
+            )
+
             self.nearest_status.config(
                 text=(
                     f"{identity} • {nearest_distance:.1f} NM\n"
-                    f"{altitude}"
+                    f"{altitude} • BRG {aircraft_bearing:.0f}° • HDG {heading}"
                 ),
                 fg=config.TEXT,
             )
@@ -460,11 +487,19 @@ class Dashboard(tk.Frame):
         )
 
         if nearest_airport is not None:
+            airport_bearing = self.bearing_degrees(
+                config.HOME_LAT,
+                config.HOME_LON,
+                nearest_airport["lat"],
+                nearest_airport["lon"],
+            )
+
             self.location_status.config(
                 text=(
                     f'{nearest_airport["icao"]} • '
                     f'{nearest_airport["name"]}\n'
-                    f'{nearest_airport_distance:.1f} NM'
+                    f'{nearest_airport_distance:.1f} NM • '
+                    f'BRG {airport_bearing:.0f}°'
                 ),
                 fg=config.TEXT,
             )
