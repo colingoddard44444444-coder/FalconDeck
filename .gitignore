@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*_backup.py
+*_before_*.py
+*_faulty_backup.py
+*_bad_structure.py
+*_failed_*.py
