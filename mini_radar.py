@@ -16,9 +16,18 @@ class MiniRadar(tk.Canvas):
             cursor="none",
         )
 
-        self.range_nm = range_nm
+        self.ranges = [10, 25, 50]
+        self.range_nm = range_nm if range_nm in self.ranges else 25
         self.aircraft = []
         self.bind("<Configure>", lambda event: self.redraw())
+        self.bind("<ButtonRelease-1>", self.change_range)
+
+    def change_range(self, event=None):
+        current = self.ranges.index(self.range_nm)
+        self.range_nm = self.ranges[
+            (current + 1) % len(self.ranges)
+        ]
+        self.redraw()
 
     @staticmethod
     def distance_and_bearing(lat1, lon1, lat2, lon2):
@@ -150,4 +159,13 @@ class MiniRadar(tk.Canvas):
             anchor="sw",
             fill="#9aa7b2",
             font=("DejaVu Sans", 7, "bold"),
+        )
+
+        self.create_text(
+            width - 7,
+            height - 7,
+            text="TAP TO CHANGE RANGE",
+            anchor="se",
+            fill="#5f7f91",
+            font=("DejaVu Sans", 6, "bold"),
         )
