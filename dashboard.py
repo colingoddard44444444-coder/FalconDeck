@@ -21,6 +21,8 @@ class Dashboard(tk.Frame):
         self.close_app = close_app
         self.play_click = play_click
         self.menu_cards = []
+        self.current_nearest_airport = None
+        self.current_airport_distance = None
 
         self.build_interface()
         self.animate_menu()
@@ -198,6 +200,15 @@ class Dashboard(tk.Frame):
         self.receiver_status = self.status_row(status_panel, "ADS-B RECEIVER")
         self.network_status = self.status_row(status_panel, "NETWORK")
         self.location_status = self.status_row(status_panel, "LOCATION")
+        self.location_status.bind(
+            "<ButtonRelease-1>",
+            self.open_nearest_airport,
+        )
+        self.location_status.master.bind(
+            "<ButtonRelease-1>",
+            self.open_nearest_airport,
+        )
+
         self.system_status = self.status_row(status_panel, "SYSTEM")
 
         menu = tk.Frame(
@@ -372,6 +383,119 @@ class Dashboard(tk.Frame):
 
         if action:
             self.after(70, action)
+
+    def open_nearest_airport(self, event=None):
+        airport = self.current_nearest_airport
+        distance = self.current_airport_distance
+
+        if airport is None:
+            return
+
+        bearing = self.bearing_degrees(
+            config.HOME_LAT,
+            config.HOME_LON,
+            airport["lat"],
+            airport["lon"],
+        )
+
+        window = tk.Toplevel(self)
+        window.configure(bg=config.BACKGROUND)
+        window.geometry("540x340+130+70")
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+
+        header = tk.Frame(
+            window,
+            bg=config.PANEL,
+            height=54,
+        )
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        tk.Label(
+            header,
+            text=airport["icao"],
+            bg=config.PANEL,
+            fg=config.ACCENT,
+            font=("DejaVu Sans", 19, "bold"),
+        ).pack(side="left", padx=15, pady=10)
+
+        tk.Button(
+            header,
+            text="CLOSE",
+            command=window.destroy,
+            bg=config.DANGER,
+            fg="white",
+            activebackground="#B71C1C",
+            activeforeground="white",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            padx=15,
+            pady=5,
+        ).pack(side="right", padx=10, pady=9)
+
+        body = tk.Frame(
+            window,
+            bg=config.BACKGROUND,
+        )
+        body.pack(fill="both", expand=True, padx=14, pady=12)
+
+        tk.Label(
+            body,
+            text=airport["name"],
+            bg=config.BACKGROUND,
+            fg=config.TEXT,
+            font=("DejaVu Sans", 17, "bold"),
+            wraplength=500,
+        ).pack(pady=(2, 12))
+
+        details = (
+            ("DISTANCE", f"{distance:.1f} NM"),
+            ("BEARING", f"{bearing:.0f}°"),
+            ("LATITUDE", f'{airport["lat"]:.5f}'),
+            ("LONGITUDE", f'{airport["lon"]:.5f}'),
+        )
+
+        cards = tk.Frame(body, bg=config.BACKGROUND)
+        cards.pack(fill="both", expand=True)
+
+        for index, (title, value) in enumerate(details):
+            card = tk.Frame(
+                cards,
+                bg=config.PANEL,
+                highlightthickness=1,
+                highlightbackground=config.DIM_TEXT,
+            )
+            card.grid(
+                row=index // 2,
+                column=index % 2,
+                sticky="nsew",
+                padx=5,
+                pady=5,
+            )
+
+            tk.Label(
+                card,
+                text=title,
+                bg=config.PANEL,
+                fg=config.DIM_TEXT,
+                font=("DejaVu Sans", 8, "bold"),
+            ).pack(anchor="w", padx=10, pady=(9, 1))
+
+            tk.Label(
+                card,
+                text=value,
+                bg=config.PANEL,
+                fg=config.TEXT,
+                font=("DejaVu Sans", 13, "bold"),
+            ).pack(anchor="w", padx=10, pady=(0, 9))
+
+        for column in range(2):
+            cards.grid_columnconfigure(column, weight=1)
+
+        for row in range(2):
+            cards.grid_rowconfigure(row, weight=1)
 
     def show_aircraft_details(self, aircraft):
         window = tk.Toplevel(self)
@@ -616,6 +740,9 @@ class Dashboard(tk.Frame):
             ):
                 nearest_airport = airport
                 nearest_airport_distance = distance
+
+        self.current_nearest_airport = nearest_airport
+        self.current_airport_distance = nearest_airport_distance
 
         receiver_running = os.path.exists(config.AIRCRAFT_JSON)
         network_online = self.wifi_connected()
