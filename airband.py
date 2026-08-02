@@ -19,6 +19,8 @@ class AirbandScreen(tk.Frame):
         self.recording = False
         self.recording_file = None
         self.wave_writer = None
+        self.playback_process = None
+        self.recordings_window = None
         self.recordings_dir = (
             Path(__file__).resolve().parent / "recordings"
         )
@@ -216,7 +218,14 @@ class AirbandScreen(tk.Frame):
             "START RECORDING",
             self.toggle_recording,
         )
-        self.record_button.pack(fill="x", pady=(0, 6))
+        self.record_button.pack(fill="x", pady=(0, 4))
+
+        self.recordings_button = self.control_button(
+            body,
+            "RECORDINGS",
+            self.open_recordings,
+        )
+        self.recordings_button.pack(fill="x", pady=(0, 6))
 
         self.message = tk.Label(
             body,
@@ -494,6 +503,170 @@ class AirbandScreen(tk.Frame):
                 fg=config.DANGER,
             )
 
+    def open_recordings(self):
+        recordings = sorted(
+            self.recordings_dir.glob("*.wav"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+
+        if self.recordings_window is not None:
+            try:
+                self.recordings_window.destroy()
+            except tk.TclError:
+                pass
+
+        self.recordings_window = tk.Toplevel(self)
+        self.recordings_window.title("Airband Recordings")
+        self.recordings_window.configure(bg=config.BACKGROUND)
+        self.recordings_window.geometry("760x400+20+55")
+        self.recordings_window.overrideredirect(True)
+
+        header = tk.Frame(
+            self.recordings_window,
+            bg=config.PANEL,
+            height=48,
+        )
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        tk.Label(
+            header,
+            text="AIRBAND RECORDINGS",
+            bg=config.PANEL,
+            fg=config.ACCENT,
+            font=("DejaVu Sans", 15, "bold"),
+        ).pack(side="left", padx=14, pady=10)
+
+        tk.Button(
+            header,
+            text="CLOSE",
+            command=self.close_recordings,
+            bg=config.DANGER,
+            fg="white",
+            activebackground="#B71C1C",
+            activeforeground="white",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            padx=14,
+            pady=4,
+        ).pack(side="right", padx=10, pady=8)
+
+        list_frame = tk.Frame(
+            self.recordings_window,
+            bg=config.BACKGROUND,
+        )
+        list_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        if not recordings:
+            tk.Label(
+                list_frame,
+                text="NO RECORDINGS FOUND",
+                bg=config.BACKGROUND,
+                fg=config.DIM_TEXT,
+                font=("DejaVu Sans", 13, "bold"),
+            ).pack(expand=True)
+            return
+
+        for recording in recordings[:8]:
+            row = tk.Frame(
+                list_frame,
+                bg=config.PANEL,
+                highlightthickness=1,
+                highlightbackground=config.DIM_TEXT,
+            )
+            row.pack(fill="x", pady=3)
+
+            tk.Label(
+                row,
+                text=recording.name,
+                bg=config.PANEL,
+                fg=config.TEXT,
+                font=("DejaVu Sans", 9, "bold"),
+                anchor="w",
+            ).pack(
+                side="left",
+                fill="x",
+                expand=True,
+                padx=10,
+                pady=8,
+            )
+
+            tk.Button(
+                row,
+                text="PLAY",
+                command=lambda file=recording: self.play_recording(file),
+                bg=config.PANEL_LIGHT,
+                fg=config.ACCENT,
+                activebackground=config.ACCENT,
+                activeforeground="#000000",
+                relief="flat",
+                bd=0,
+                font=("DejaVu Sans", 9, "bold"),
+                padx=12,
+            ).pack(side="right", padx=3, pady=4)
+
+            tk.Button(
+                row,
+                text="STOP",
+                command=self.stop_playback,
+                bg=config.PANEL_LIGHT,
+                fg=config.TEXT,
+                activebackground=config.DANGER,
+                activeforeground="white",
+                relief="flat",
+                bd=0,
+                font=("DejaVu Sans", 9, "bold"),
+                padx=12,
+            ).pack(side="right", padx=3, pady=4)
+
+    def play_recording(self, recording):
+        self.stop_playback()
+
+        try:
+            self.playback_process = subprocess.Popen(
+                [
+                    "aplay",
+                    "--quiet",
+                    "-D",
+                    "default",
+                    str(recording),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            self.message.config(
+                text=f"PLAYING • {recording.name}",
+                fg=config.SUCCESS,
+            )
+        except OSError as error:
+            self.message.config(
+                text=f"PLAYBACK ERROR: {error}",
+                fg=config.DANGER,
+            )
+
+    def stop_playback(self):
+        if (
+            self.playback_process is not None
+            and self.playback_process.poll() is None
+        ):
+            self.playback_process.terminate()
+
+        self.playback_process = None
+
+    def close_recordings(self):
+        self.stop_playback()
+
+        if self.recordings_window is not None:
+            try:
+                self.recordings_window.destroy()
+            except tk.TclError:
+                pass
+
+        self.recordings_window = None
+
     def forward_audio(self):
         try:
             while (
@@ -663,6 +836,11 @@ class AirbandScreen(tk.Frame):
             )
 
     def return_home(self):
+        self.stop_playback()
+
+        if self.recordings_window is not None:
+            self.close_recordings()
+
         self.stop_listening()
         self.start_adsb()
         self.after(1200, self.show_dashboard)
