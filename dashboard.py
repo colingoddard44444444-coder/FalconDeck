@@ -11,16 +11,20 @@ from mini_radar import MiniRadar
 
 
 class Dashboard(tk.Frame):
-    def __init__(self, parent, show_radar, show_flights, show_map, show_airband, close_app, play_click=None):
+    def __init__(self, parent, show_radar, show_flights, show_map, show_airband, show_settings, show_developer, close_app, play_click=None):
         super().__init__(parent, bg=config.BACKGROUND, cursor="none")
 
         self.show_radar = show_radar
         self.show_flights = show_flights
         self.show_map = show_map
         self.show_airband = show_airband
+        self.show_settings = show_settings
+        self.show_developer = show_developer
         self.close_app = close_app
         self.play_click = play_click
         self.menu_cards = []
+        self.selected_aircraft_hex = None
+        self.current_target = None
         self.current_nearest_airport = None
         self.current_airport_distance = None
 
@@ -196,7 +200,18 @@ class Dashboard(tk.Frame):
         )
 
         self.aircraft_status = self.status_row(status_panel, "AIRCRAFT")
-        self.nearest_status = self.status_row(status_panel, "NEAREST AIRCRAFT")
+        self.nearest_status = self.status_row(
+            status_panel,
+            "NEAREST AIRCRAFT",
+        )
+        self.nearest_status.bind(
+            "<ButtonRelease-1>",
+            self.clear_target,
+        )
+        self.nearest_status.master.bind(
+            "<ButtonRelease-1>",
+            self.clear_target,
+        )
         self.receiver_status = self.status_row(status_panel, "ADS-B RECEIVER")
         self.network_status = self.status_row(status_panel, "NETWORK")
         self.location_status = self.status_row(status_panel, "LOCATION")
@@ -254,9 +269,9 @@ class Dashboard(tk.Frame):
         self.menu_button(
             menu, 4,
             "SETTINGS",
-            "System controls coming soon",
-            None,
-            False,
+            "Audio and system controls",
+            self.show_settings,
+            True,
         )
 
     def status_row(self, parent, title):
@@ -497,12 +512,62 @@ class Dashboard(tk.Frame):
         for row in range(2):
             cards.grid_rowconfigure(row, weight=1)
 
+    def select_target(self, aircraft):
+        aircraft_hex = getattr(aircraft, "hex", None)
+
+        if aircraft_hex:
+            self.selected_aircraft_hex = aircraft_hex.lower()
+            self.current_target = aircraft
+            self.update_target_display()
+
+    def clear_target(self, event=None):
+        if self.selected_aircraft_hex is None:
+            return
+
+        self.selected_aircraft_hex = None
+        self.current_target = None
+        self.nearest_status.indicator.config(
+            fg=config.DIM_TEXT,
+        )
+        self.update_status()
+
     def show_aircraft_details(self, aircraft):
+        self.select_target(aircraft)
+        latitude = getattr(aircraft, "latitude", None)
+        longitude = getattr(aircraft, "longitude", None)
+
+        distance = None
+        bearing = None
+
+        if isinstance(latitude, (int, float)) and isinstance(
+            longitude,
+            (int, float),
+        ):
+            distance = self.distance_nm(
+                config.HOME_LAT,
+                config.HOME_LON,
+                latitude,
+                longitude,
+            )
+
+            bearing = self.bearing_degrees(
+                config.HOME_LAT,
+                config.HOME_LON,
+                latitude,
+                longitude,
+            )
+
         window = tk.Toplevel(self)
         window.configure(bg=config.BACKGROUND)
-        window.geometry("540x350+130+65")
+        window.geometry("620x370+90+55")
         window.overrideredirect(True)
         window.attributes("-topmost", True)
+
+        identity = (
+            getattr(aircraft, "callsign", None)
+            or getattr(aircraft, "registration", None)
+            or getattr(aircraft, "hex", "UNKNOWN").upper()
+        )
 
         header = tk.Frame(
             window,
@@ -512,18 +577,13 @@ class Dashboard(tk.Frame):
         header.pack(fill="x")
         header.pack_propagate(False)
 
-        identity = (
-            getattr(aircraft, "callsign", None)
-            or getattr(aircraft, "hex", "UNKNOWN").upper()
-        )
-
         tk.Label(
             header,
-            text=identity,
+            text=f"AIRCRAFT  •  {identity}",
             bg=config.PANEL,
             fg=config.ACCENT,
-            font=("DejaVu Sans", 18, "bold"),
-        ).pack(side="left", padx=15, pady=10)
+            font=("DejaVu Sans", 16, "bold"),
+        ).pack(side="left", padx=14, pady=10)
 
         tk.Button(
             header,
@@ -536,18 +596,31 @@ class Dashboard(tk.Frame):
             relief="flat",
             bd=0,
             font=("DejaVu Sans", 9, "bold"),
-            padx=15,
+            padx=14,
             pady=5,
-        ).pack(side="right", padx=10, pady=9)
+            cursor="none",
+        ).pack(side="right", padx=9, pady=8)
 
         body = tk.Frame(
             window,
             bg=config.BACKGROUND,
         )
-        body.pack(fill="both", expand=True, padx=14, pady=12)
+        body.pack(
+            fill="both",
+            expand=True,
+            padx=10,
+            pady=9,
+        )
 
-        details = (
-            ("HEX", getattr(aircraft, "hex", "--").upper()),
+        values = (
+            (
+                "HEX",
+                str(getattr(aircraft, "hex", "--")).upper(),
+            ),
+            (
+                "REGISTRATION",
+                str(getattr(aircraft, "registration", None) or "--"),
+            ),
             (
                 "ALTITUDE",
                 f'{aircraft.altitude:,.0f} FT'
@@ -576,10 +649,6 @@ class Dashboard(tk.Frame):
                 else "--",
             ),
             (
-                "SQUAWK",
-                str(getattr(aircraft, "squawk", None) or "--"),
-            ),
-            (
                 "VERTICAL RATE",
                 f'{aircraft.vertical_rate:+.0f} FT/MIN'
                 if isinstance(
@@ -588,21 +657,43 @@ class Dashboard(tk.Frame):
                 )
                 else "--",
             ),
+            (
+                "DISTANCE",
+                f"{distance:.1f} NM"
+                if distance is not None
+                else "--",
+            ),
+            (
+                "BEARING",
+                f"{bearing:.0f}°"
+                if bearing is not None
+                else "--",
+            ),
+            (
+                "SQUAWK",
+                str(getattr(aircraft, "squawk", None) or "--"),
+            ),
         )
 
-        for index, (title, value) in enumerate(details):
+        cards = tk.Frame(
+            body,
+            bg=config.BACKGROUND,
+        )
+        cards.pack(fill="both", expand=True)
+
+        for index, (title, value) in enumerate(values):
             card = tk.Frame(
-                body,
+                cards,
                 bg=config.PANEL,
                 highlightthickness=1,
                 highlightbackground=config.DIM_TEXT,
             )
             card.grid(
-                row=index // 2,
-                column=index % 2,
+                row=index // 3,
+                column=index % 3,
                 sticky="nsew",
-                padx=5,
-                pady=5,
+                padx=3,
+                pady=3,
             )
 
             tk.Label(
@@ -610,22 +701,155 @@ class Dashboard(tk.Frame):
                 text=title,
                 bg=config.PANEL,
                 fg=config.DIM_TEXT,
-                font=("DejaVu Sans", 8, "bold"),
-            ).pack(anchor="w", padx=10, pady=(8, 1))
+                font=("DejaVu Sans", 7, "bold"),
+            ).pack(
+                anchor="w",
+                padx=8,
+                pady=(6, 0),
+            )
 
             tk.Label(
                 card,
                 text=value,
                 bg=config.PANEL,
                 fg=config.TEXT,
-                font=("DejaVu Sans", 12, "bold"),
-            ).pack(anchor="w", padx=10, pady=(0, 8))
+                font=("DejaVu Sans", 10, "bold"),
+            ).pack(
+                anchor="w",
+                padx=8,
+                pady=(1, 6),
+            )
 
-        for column in range(2):
-            body.grid_columnconfigure(column, weight=1)
+        for column in range(3):
+            cards.grid_columnconfigure(column, weight=1)
 
         for row in range(3):
-            body.grid_rowconfigure(row, weight=1)
+            cards.grid_rowconfigure(row, weight=1)
+
+        actions = tk.Frame(
+            body,
+            bg=config.BACKGROUND,
+        )
+        actions.pack(fill="x", pady=(6, 0))
+
+        def open_map():
+            window.destroy()
+            self.run_action(self.show_map)
+
+        def open_airband():
+            window.destroy()
+            self.run_action(self.show_airband)
+
+        tk.Button(
+            actions,
+            text="OPEN MOVING MAP",
+            command=open_map,
+            bg=config.PANEL_LIGHT,
+            fg=config.ACCENT,
+            activebackground=config.ACCENT,
+            activeforeground="#000000",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            pady=7,
+            cursor="none",
+        ).pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=(0, 4),
+        )
+
+        tk.Button(
+            actions,
+            text="OPEN AIRBAND",
+            command=open_airband,
+            bg=config.PANEL_LIGHT,
+            fg=config.ACCENT,
+            activebackground=config.ACCENT,
+            activeforeground="#000000",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            pady=7,
+            cursor="none",
+        ).pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=(4, 0),
+        )
+
+    def update_target_display(self):
+        aircraft = self.current_target
+
+        if aircraft is None:
+            return
+
+        identity = (
+            getattr(aircraft, "callsign", None)
+            or getattr(aircraft, "registration", None)
+            or getattr(aircraft, "hex", "UNKNOWN").upper()
+        )
+
+        altitude = getattr(aircraft, "altitude", None)
+        speed = getattr(aircraft, "speed", None)
+        heading = getattr(aircraft, "heading", None)
+        latitude = getattr(aircraft, "latitude", None)
+        longitude = getattr(aircraft, "longitude", None)
+
+        altitude_text = (
+            f"{altitude:,.0f} FT"
+            if isinstance(altitude, (int, float))
+            else "ALT --"
+        )
+
+        speed_text = (
+            f"{speed:.0f} KT"
+            if isinstance(speed, (int, float))
+            else "SPD --"
+        )
+
+        heading_text = (
+            f"{heading:.0f}°"
+            if isinstance(heading, (int, float))
+            else "--"
+        )
+
+        distance_text = "--"
+        bearing_text = "--"
+
+        if (
+            isinstance(latitude, (int, float))
+            and isinstance(longitude, (int, float))
+        ):
+            distance = self.distance_nm(
+                config.HOME_LAT,
+                config.HOME_LON,
+                latitude,
+                longitude,
+            )
+            bearing = self.bearing_degrees(
+                config.HOME_LAT,
+                config.HOME_LON,
+                latitude,
+                longitude,
+            )
+
+            distance_text = f"{distance:.1f} NM"
+            bearing_text = f"{bearing:.0f}°"
+
+        self.nearest_status.config(
+            text=(
+                f"TARGET • {identity} • {distance_text}\n"
+                f"{altitude_text} • {speed_text} • "
+                f"BRG {bearing_text} • HDG {heading_text}"
+            ),
+            fg=config.TEXT,
+        )
+        self.nearest_status.indicator.config(
+            fg="#ffb000",
+        )
 
     def update_clock(self):
         now = datetime.now(timezone.utc)
@@ -701,6 +925,31 @@ class Dashboard(tk.Frame):
 
         self.mini_radar.update_aircraft(aircraft)
 
+        if self.selected_aircraft_hex is not None:
+            refreshed_target = next(
+                (
+                    plane
+                    for plane in aircraft
+                    if str(
+                        getattr(plane, "hex", "")
+                    ).lower() == self.selected_aircraft_hex
+                ),
+                None,
+            )
+
+            if refreshed_target is not None:
+                self.current_target = refreshed_target
+                self.update_target_display()
+            else:
+                self.nearest_status.config(
+                    text="TARGET • LOST CONTACT\nTAP TO CLEAR",
+                    fg=config.DANGER,
+                )
+                self.nearest_status.indicator.config(
+                    fg=config.DANGER,
+                )
+
+
         positioned_aircraft = [
             plane for plane in aircraft
             if plane.has_position
@@ -754,7 +1003,9 @@ class Dashboard(tk.Frame):
             fg=config.SUCCESS if aircraft else config.DIM_TEXT
         )
 
-        if nearest is not None:
+        if self.selected_aircraft_hex is not None:
+            pass
+        elif nearest is not None:
             identity = (
                 nearest.callsign
                 or nearest.registration
