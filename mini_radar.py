@@ -5,7 +5,7 @@ import config
 
 
 class MiniRadar(tk.Canvas):
-    def __init__(self, parent, range_nm=25):
+    def __init__(self, parent, range_nm=25, on_aircraft_selected=None):
         super().__init__(
             parent,
             width=245,
@@ -19,8 +19,23 @@ class MiniRadar(tk.Canvas):
         self.ranges = [10, 25, 50]
         self.range_nm = range_nm if range_nm in self.ranges else 25
         self.aircraft = []
+        self.aircraft_hitboxes = []
+        self.on_aircraft_selected = on_aircraft_selected
+
         self.bind("<Configure>", lambda event: self.redraw())
+        self.bind("<ButtonRelease-1>", self.handle_touch)
         self.bind("<ButtonRelease-1>", self.change_range)
+
+    def handle_touch(self, event):
+        for x1, y1, x2, y2, aircraft in reversed(
+            self.aircraft_hitboxes
+        ):
+            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
+                if self.on_aircraft_selected:
+                    self.on_aircraft_selected(aircraft)
+                return
+
+        self.change_range()
 
     def change_range(self, event=None):
         current = self.ranges.index(self.range_nm)
@@ -69,6 +84,7 @@ class MiniRadar(tk.Canvas):
 
     def redraw(self):
         self.delete("all")
+        self.aircraft_hitboxes = []
 
         width = max(1, self.winfo_width())
         height = max(1, self.winfo_height())
@@ -141,13 +157,23 @@ class MiniRadar(tk.Canvas):
 
             self.create_polygon(
                 x,
-                y - 4,
-                x + 3,
-                y + 3,
-                x - 3,
-                y + 3,
+                y - 5,
+                x + 4,
+                y + 4,
+                x - 4,
+                y + 4,
                 fill="#00eaff",
                 outline="black",
+            )
+
+            self.aircraft_hitboxes.append(
+                (
+                    x - 12,
+                    y - 12,
+                    x + 12,
+                    y + 12,
+                    plane,
+                )
             )
 
             visible += 1

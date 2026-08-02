@@ -11,12 +11,13 @@ from mini_radar import MiniRadar
 
 
 class Dashboard(tk.Frame):
-    def __init__(self, parent, show_radar, show_flights, show_map, close_app, play_click=None):
+    def __init__(self, parent, show_radar, show_flights, show_map, show_airband, close_app, play_click=None):
         super().__init__(parent, bg=config.BACKGROUND, cursor="none")
 
         self.show_radar = show_radar
         self.show_flights = show_flights
         self.show_map = show_map
+        self.show_airband = show_airband
         self.close_app = close_app
         self.play_click = play_click
         self.menu_cards = []
@@ -114,6 +115,7 @@ class Dashboard(tk.Frame):
         self.mini_radar = MiniRadar(
             status_panel,
             range_nm=25,
+            on_aircraft_selected=self.show_aircraft_details,
         )
         self.mini_radar.pack(
             fill="x",
@@ -234,9 +236,9 @@ class Dashboard(tk.Frame):
         self.menu_button(
             menu, 3,
             "AIRBAND",
-            "Radio controls coming soon",
-            None,
-            False,
+            "Open RTL-SDR airband controls",
+            self.show_airband,
+            True,
         )
         self.menu_button(
             menu, 4,
@@ -370,6 +372,136 @@ class Dashboard(tk.Frame):
 
         if action:
             self.after(70, action)
+
+    def show_aircraft_details(self, aircraft):
+        window = tk.Toplevel(self)
+        window.configure(bg=config.BACKGROUND)
+        window.geometry("540x350+130+65")
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+
+        header = tk.Frame(
+            window,
+            bg=config.PANEL,
+            height=52,
+        )
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        identity = (
+            getattr(aircraft, "callsign", None)
+            or getattr(aircraft, "hex", "UNKNOWN").upper()
+        )
+
+        tk.Label(
+            header,
+            text=identity,
+            bg=config.PANEL,
+            fg=config.ACCENT,
+            font=("DejaVu Sans", 18, "bold"),
+        ).pack(side="left", padx=15, pady=10)
+
+        tk.Button(
+            header,
+            text="CLOSE",
+            command=window.destroy,
+            bg=config.DANGER,
+            fg="white",
+            activebackground="#B71C1C",
+            activeforeground="white",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            padx=15,
+            pady=5,
+        ).pack(side="right", padx=10, pady=9)
+
+        body = tk.Frame(
+            window,
+            bg=config.BACKGROUND,
+        )
+        body.pack(fill="both", expand=True, padx=14, pady=12)
+
+        details = (
+            ("HEX", getattr(aircraft, "hex", "--").upper()),
+            (
+                "ALTITUDE",
+                f'{aircraft.altitude:,.0f} FT'
+                if isinstance(
+                    getattr(aircraft, "altitude", None),
+                    (int, float),
+                )
+                else "--",
+            ),
+            (
+                "SPEED",
+                f'{aircraft.speed:.0f} KT'
+                if isinstance(
+                    getattr(aircraft, "speed", None),
+                    (int, float),
+                )
+                else "--",
+            ),
+            (
+                "HEADING",
+                f'{aircraft.heading:.0f}°'
+                if isinstance(
+                    getattr(aircraft, "heading", None),
+                    (int, float),
+                )
+                else "--",
+            ),
+            (
+                "SQUAWK",
+                str(getattr(aircraft, "squawk", None) or "--"),
+            ),
+            (
+                "VERTICAL RATE",
+                f'{aircraft.vertical_rate:+.0f} FT/MIN'
+                if isinstance(
+                    getattr(aircraft, "vertical_rate", None),
+                    (int, float),
+                )
+                else "--",
+            ),
+        )
+
+        for index, (title, value) in enumerate(details):
+            card = tk.Frame(
+                body,
+                bg=config.PANEL,
+                highlightthickness=1,
+                highlightbackground=config.DIM_TEXT,
+            )
+            card.grid(
+                row=index // 2,
+                column=index % 2,
+                sticky="nsew",
+                padx=5,
+                pady=5,
+            )
+
+            tk.Label(
+                card,
+                text=title,
+                bg=config.PANEL,
+                fg=config.DIM_TEXT,
+                font=("DejaVu Sans", 8, "bold"),
+            ).pack(anchor="w", padx=10, pady=(8, 1))
+
+            tk.Label(
+                card,
+                text=value,
+                bg=config.PANEL,
+                fg=config.TEXT,
+                font=("DejaVu Sans", 12, "bold"),
+            ).pack(anchor="w", padx=10, pady=(0, 8))
+
+        for column in range(2):
+            body.grid_columnconfigure(column, weight=1)
+
+        for row in range(3):
+            body.grid_rowconfigure(row, weight=1)
 
     def update_clock(self):
         now = datetime.now(timezone.utc)
