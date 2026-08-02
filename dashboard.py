@@ -603,7 +603,22 @@ class Dashboard(tk.Frame):
             fg=config.TEXT,
             font=("DejaVu Sans", 17, "bold"),
         )
-        self.target_identity.pack(pady=(9, 5))
+        self.target_identity.pack(pady=(7, 2))
+
+        self.sky_pointer = tk.Label(
+            self.target_panel,
+            text="LOOK  •  --  •  ELEVATION --",
+            bg="#08131c",
+            fg="#ffb000",
+            font=("DejaVu Sans", 11, "bold"),
+            pady=6,
+            cursor="none",
+        )
+        self.sky_pointer.pack(
+            fill="x",
+            padx=8,
+            pady=(1, 3),
+        )
 
         grid = tk.Frame(
             self.target_panel,
@@ -737,6 +752,40 @@ class Dashboard(tk.Frame):
 
         self.update_target_panel()
 
+    @staticmethod
+    def compass_direction(bearing):
+        directions = (
+            "NORTH",
+            "NORTH EAST",
+            "EAST",
+            "SOUTH EAST",
+            "SOUTH",
+            "SOUTH WEST",
+            "WEST",
+            "NORTH WEST",
+        )
+
+        index = int((bearing + 22.5) // 45) % 8
+        return directions[index]
+
+    @staticmethod
+    def elevation_angle(altitude_ft, distance_nm):
+        if (
+            not isinstance(altitude_ft, (int, float))
+            or not isinstance(distance_nm, (int, float))
+            or distance_nm <= 0
+        ):
+            return None
+
+        horizontal_distance_ft = distance_nm * 6076.12
+
+        return math.degrees(
+            math.atan2(
+                max(0, altitude_ft),
+                horizontal_distance_ft,
+            )
+        )
+
     def update_target_panel(self):
         if not hasattr(self, "target_panel"):
             return
@@ -783,6 +832,31 @@ class Dashboard(tk.Frame):
             )
 
         altitude = getattr(aircraft, "altitude", None)
+
+        direction = (
+            self.compass_direction(bearing)
+            if bearing is not None
+            else "--"
+        )
+
+        elevation = self.elevation_angle(
+            altitude,
+            distance,
+        )
+
+        elevation_text = (
+            f"{elevation:.0f}°"
+            if elevation is not None
+            else "--"
+        )
+
+        if hasattr(self, "sky_pointer"):
+            self.sky_pointer.config(
+                text=(
+                    f"LOOK  •  {direction}  •  "
+                    f"ELEVATION {elevation_text}"
+                )
+            )
         speed = getattr(aircraft, "speed", None)
         heading = getattr(aircraft, "heading", None)
         vertical_rate = getattr(aircraft, "vertical_rate", None)
