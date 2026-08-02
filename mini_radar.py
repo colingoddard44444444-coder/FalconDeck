@@ -24,7 +24,6 @@ class MiniRadar(tk.Canvas):
 
         self.bind("<Configure>", lambda event: self.redraw())
         self.bind("<ButtonRelease-1>", self.handle_touch)
-        self.bind("<ButtonRelease-1>", self.change_range)
 
     def handle_touch(self, event):
         for x1, y1, x2, y2, aircraft in reversed(
@@ -168,10 +167,10 @@ class MiniRadar(tk.Canvas):
 
             self.aircraft_hitboxes.append(
                 (
-                    x - 12,
-                    y - 12,
-                    x + 12,
-                    y + 12,
+                    x - 22,
+                    y - 22,
+                    x + 22,
+                    y + 22,
                     plane,
                 )
             )

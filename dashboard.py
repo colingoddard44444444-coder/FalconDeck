@@ -3,10 +3,13 @@ import os
 import socket
 import tkinter as tk
 from datetime import datetime, timezone
+from pathlib import Path
 
 import config
 from adsb import load_aircraft
+from aircraft_intelligence import AircraftIntelligence
 from airports import AIRPORTS
+from event_engine import EventEngine
 from mini_radar import MiniRadar
 
 
@@ -24,18 +27,51 @@ class Dashboard(tk.Frame):
         self.close_app = close_app
         self.play_click = play_click
         self.menu_cards = []
+        self.menu_status_labels = {}
+        self.activity_log_file = (
+            Path(__file__).resolve().parent
+            / "logs"
+            / "mission_activity.log"
+        )
+
+        self.event_engine = EventEngine(
+            self.activity_log_file,
+            maximum_events=100,
+        )
+        self.event_engine.subscribe(
+            self.receive_event,
+        )
+
+        self.activity_events = [
+            self.event_engine.format_event(event)
+            for event in self.event_engine.recent(20)
+        ]
+        self.spotlight_aircraft_hex = None
         self.selected_aircraft_hex = None
         self.current_target = None
         self.target_previous_distance = None
         self.target_motion = "CALCULATING"
         self.current_target_airport = None
         self.current_target_airport_distance = None
+        self.alerted_emergency_hexes = set()
         self.suggested_radio_service = None
         self.suggested_radio_frequency = None
         self.close_target_panel()
         self.current_nearest_airport = None
         self.current_airport_distance = None
 
+        self.aircraft_intelligence = AircraftIntelligence(
+            home_lat=config.HOME_LAT,
+            home_lon=config.HOME_LON,
+            distance_function=self.distance_nm,
+            bearing_function=self.bearing_degrees,
+            airport_value_function=self.airport_value,
+            nearest_airport_function=self.nearest_airport_to_position,
+            airport_frequencies_function=self.airport_frequencies,
+        )
+        self.current_spotlight_insight = None
+
+        self.activity_visible = False
         self.build_interface()
         self.animate_menu()
         self.update_status()
@@ -70,6 +106,45 @@ class Dashboard(tk.Frame):
             font=("DejaVu Sans", 8, "bold"),
         )
         self.header_status.pack(anchor="w")
+
+        self.health_strip = tk.Frame(
+            header,
+            bg=config.PANEL,
+            cursor="none",
+        )
+        self.health_strip.pack(
+            side="right",
+            padx=(4, 8),
+            pady=8,
+        )
+
+        self.health_labels = {}
+
+        for name in ("ADS-B", "WI-FI", "TARGET"):
+            item = tk.Frame(
+                self.health_strip,
+                bg=config.PANEL,
+            )
+            item.pack(side="left", padx=4)
+
+            indicator = tk.Label(
+                item,
+                text="●",
+                bg=config.PANEL,
+                fg=config.DIM_TEXT,
+                font=("DejaVu Sans", 9, "bold"),
+            )
+            indicator.pack(side="left", padx=(0, 2))
+
+            tk.Label(
+                item,
+                text=name,
+                bg=config.PANEL,
+                fg=config.DIM_TEXT,
+                font=("DejaVu Sans", 7, "bold"),
+            ).pack(side="left")
+
+            self.health_labels[name] = indicator
 
         self.clock_label = tk.Label(
             header,
@@ -240,9 +315,21 @@ class Dashboard(tk.Frame):
             cursor="none",
         )
         menu.grid(row=0, column=1, sticky="nsew")
+        self.menu_panel = menu
 
         for row in range(5):
-            menu.grid_rowconfigure(row, weight=1, uniform="menu")
+            menu.grid_rowconfigure(
+                row,
+                weight=1,
+                uniform="menu",
+                minsize=47,
+            )
+
+        menu.grid_rowconfigure(
+            5,
+            weight=0,
+            minsize=32,
+        )
 
         menu.grid_columnconfigure(0, weight=1)
 
@@ -280,6 +367,167 @@ class Dashboard(tk.Frame):
             "Audio and system controls",
             self.show_settings,
             True,
+        )
+
+        self.activity_panel = tk.Frame(
+            menu,
+            bg=config.PANEL,
+            highlightthickness=1,
+            highlightbackground=config.DIM_TEXT,
+            cursor="none",
+        )
+        self.activity_panel.grid(
+            row=5,
+            column=0,
+            sticky="nsew",
+            pady=(3, 0),
+        )
+
+        activity_header = tk.Frame(
+            self.activity_panel,
+            bg=config.PANEL_LIGHT,
+            height=25,
+        )
+        activity_header.pack(fill="x")
+        activity_header.pack_propagate(False)
+
+        self.activity_toggle = tk.Button(
+            activity_header,
+            text="▼ LOG",
+            command=self.toggle_activity_panel,
+            bg=config.PANEL_LIGHT,
+            fg=config.ACCENT,
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans",8,"bold"),
+            cursor="none",
+        )
+        self.activity_toggle.pack(side="right", padx=6)
+
+        self.activity_header_label = tk.Label(
+            activity_header,
+            text="MISSION ACTIVITY",
+            bg=config.PANEL_LIGHT,
+            fg=config.ACCENT,
+            font=("DejaVu Sans", 8, "bold"),
+            anchor="w",
+        )
+        self.activity_header_label.pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=9,
+            pady=4,
+        )
+
+        self.activity_label = tk.Label(
+            self.activity_panel,
+            text="SYSTEM INITIALISING",
+            bg=config.PANEL,
+            fg=config.TEXT,
+            font=("DejaVu Sans Mono", 7, "bold"),
+            justify="left",
+            anchor="nw",
+            wraplength=390,
+        )
+        self.activity_label.pack(
+            fill="both",
+            expand=True,
+            padx=9,
+            pady=5,
+        )
+
+        if (
+            not self.activity_events
+            or "FALCONDECK MISSION CONTROL READY"
+            not in self.activity_events[0]
+        ):
+            self.log_activity(
+                "FALCONDECK MISSION CONTROL READY"
+            )
+        else:
+            self.activity_label.config(
+                text="\n".join(self.activity_events[:4])
+            )
+
+        self.update_activity_header()
+
+
+    def toggle_activity_panel(self):
+        self.activity_visible = not self.activity_visible
+
+        if self.activity_visible:
+            self.menu_panel.grid_rowconfigure(
+                5,
+                weight=0,
+                minsize=88,
+            )
+            self.activity_label.pack(
+                fill="both",
+                expand=True,
+                padx=9,
+                pady=5,
+            )
+            self.activity_toggle.config(text="▲ HIDE")
+        else:
+            self.activity_label.pack_forget()
+            self.menu_panel.grid_rowconfigure(
+                5,
+                weight=0,
+                minsize=32,
+            )
+            self.activity_toggle.config(text="▼ LOG")
+
+    def update_activity_header(self):
+        if not hasattr(self, "activity_header_label"):
+            return
+
+        recent = self.event_engine.recent(1)
+
+        if not recent:
+            text = "MISSION ACTIVITY"
+        else:
+            message = str(
+                recent[0].get("message", "")
+            ).strip()
+
+            if len(message) > 42:
+                message = message[:39] + "..."
+
+            text = f"MISSION ACTIVITY  •  {message}"
+
+        self.activity_header_label.config(text=text)
+
+    def refresh_activity_feed(self):
+        self.activity_events = [
+            self.event_engine.format_event(event)
+            for event in self.event_engine.recent(20)
+        ]
+
+        if hasattr(self, "activity_label"):
+            self.activity_label.config(
+                text="\n".join(
+                    self.activity_events[:4]
+                )
+            )
+
+        self.update_activity_header()
+
+    def receive_event(self, event):
+        self.refresh_activity_feed()
+
+    def log_activity(
+        self,
+        message,
+        category="SYSTEM",
+        importance="normal",
+        data=None,
+    ):
+        return self.event_engine.publish(
+            message=message,
+            category=category,
+            importance=importance,
+            data=data,
         )
 
     def status_row(self, parent, title):
@@ -358,12 +606,16 @@ class Dashboard(tk.Frame):
             relief="flat",
             bd=0,
             anchor="w",
-            font=("DejaVu Sans", 12, "bold"),
+            font=("DejaVu Sans", 10, "bold"),
             padx=14,
             pady=2,
             cursor="none",
         )
-        button.pack(fill="both", expand=True)
+        button.pack(
+            fill="x",
+            expand=False,
+            pady=(2, 0),
+        )
 
         if enabled:
             button.bind(
@@ -381,14 +633,22 @@ class Dashboard(tk.Frame):
                 ),
             )
 
-        tk.Label(
+        subtitle_label = tk.Label(
             frame,
             text=subtitle,
             bg=config.PANEL,
             fg=config.DIM_TEXT,
-            font=("DejaVu Sans", 8),
+            font=("DejaVu Sans", 7),
             cursor="none",
-        ).place(x=16, rely=0.69, anchor="w")
+            anchor="w",
+        )
+        subtitle_label.pack(
+            fill="x",
+            padx=16,
+            pady=(0, 2),
+        )
+
+        self.menu_status_labels[title] = subtitle_label
 
         self.menu_cards.append(frame)
         frame.grid_remove()
@@ -532,6 +792,18 @@ class Dashboard(tk.Frame):
 
             self.selected_aircraft_hex = new_hex
             self.current_target = aircraft
+
+            identity = (
+                getattr(aircraft, "callsign", None)
+                or getattr(aircraft, "registration", None)
+                or str(
+                    getattr(aircraft, "hex", "UNKNOWN")
+                ).upper()
+            )
+
+            self.log_activity(
+                f"TARGET SELECTED  {identity}"
+            )
             self.update_target_display()
 
     def clear_target(self, event=None):
@@ -1043,6 +1315,15 @@ class Dashboard(tk.Frame):
 
         if not isinstance(frequency, (int, float)):
             return
+
+        service = (
+            self.suggested_radio_service
+            or "RADIO"
+        )
+
+        self.log_activity(
+            f"TUNING {service}  {frequency:.3f} MHz"
+        )
 
         self.close_target_panel()
 
@@ -1801,6 +2082,373 @@ class Dashboard(tk.Frame):
             math.sqrt(1 - value),
         )
 
+    @staticmethod
+    def emergency_description(squawk):
+        descriptions = {
+            "7500": "UNLAWFUL INTERFERENCE",
+            "7600": "RADIO COMMUNICATION FAILURE",
+            "7700": "GENERAL EMERGENCY",
+        }
+        return descriptions.get(str(squawk), "EMERGENCY")
+
+    def track_emergency_aircraft(self, window, aircraft):
+        try:
+            window.destroy()
+        except tk.TclError:
+            pass
+
+        self.show_aircraft_details(aircraft)
+
+    def show_emergency_alert(self, aircraft):
+        squawk = str(
+            getattr(aircraft, "squawk", "")
+        ).strip()
+
+        identity = (
+            getattr(aircraft, "callsign", None)
+            or getattr(aircraft, "registration", None)
+            or str(
+                getattr(aircraft, "hex", "UNKNOWN")
+            ).upper()
+        )
+
+        description = self.emergency_description(squawk)
+
+        self.log_activity(
+            f"ALERT  SQUAWK {squawk}  {identity}"
+        )
+
+        window = tk.Toplevel(self)
+        window.configure(bg="#240506")
+        window.geometry("650x190+75+100")
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+
+        header = tk.Frame(
+            window,
+            bg=config.DANGER,
+            height=48,
+        )
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        tk.Label(
+            header,
+            text=f"EMERGENCY SQUAWK {squawk}",
+            bg=config.DANGER,
+            fg="white",
+            font=("DejaVu Sans", 16, "bold"),
+        ).pack(side="left", padx=14, pady=9)
+
+        tk.Button(
+            header,
+            text="CLOSE",
+            command=window.destroy,
+            bg="#7a1014",
+            fg="white",
+            activebackground="#a5151b",
+            activeforeground="white",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            padx=14,
+            pady=5,
+            cursor="none",
+        ).pack(side="right", padx=8, pady=7)
+
+        tk.Label(
+            window,
+            text=f"{identity}  •  {description}",
+            bg="#240506",
+            fg="white",
+            font=("DejaVu Sans", 14, "bold"),
+        ).pack(pady=(18, 5))
+
+        altitude = getattr(aircraft, "altitude", None)
+
+        altitude_text = (
+            f"{altitude:,.0f} FT"
+            if isinstance(altitude, (int, float))
+            else "ALTITUDE UNKNOWN"
+        )
+
+        tk.Label(
+            window,
+            text=altitude_text,
+            bg="#240506",
+            fg="#ffb0b0",
+            font=("DejaVu Sans", 10, "bold"),
+        ).pack(pady=(0, 12))
+
+        tk.Button(
+            window,
+            text="TRACK AIRCRAFT",
+            command=lambda: self.track_emergency_aircraft(
+                window,
+                aircraft,
+            ),
+            bg=config.DANGER,
+            fg="white",
+            activebackground="white",
+            activeforeground=config.DANGER,
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 11, "bold"),
+            padx=35,
+            pady=8,
+            cursor="none",
+        ).pack()
+
+        # Close automatically after 15 seconds.
+        window.after(
+            15000,
+            lambda: (
+                window.destroy()
+                if window.winfo_exists()
+                else None
+            ),
+        )
+
+    def check_emergency_squawks(self, aircraft):
+        current_emergencies = set()
+
+        for plane in aircraft:
+            squawk = str(
+                getattr(plane, "squawk", "")
+            ).strip()
+
+            if squawk not in ("7500", "7600", "7700"):
+                continue
+
+            aircraft_hex = str(
+                getattr(plane, "hex", "")
+            ).lower()
+
+            if not aircraft_hex:
+                continue
+
+            current_emergencies.add(aircraft_hex)
+
+            if aircraft_hex not in self.alerted_emergency_hexes:
+                self.alerted_emergency_hexes.add(
+                    aircraft_hex
+                )
+                self.show_emergency_alert(plane)
+
+        # Allow a new alert if the aircraft disappears and returns.
+        self.alerted_emergency_hexes.intersection_update(
+            current_emergencies
+        )
+
+    @staticmethod
+    def aircraft_identity(aircraft):
+        return (
+            getattr(aircraft, "callsign", None)
+            or getattr(aircraft, "registration", None)
+            or str(
+                getattr(aircraft, "hex", "UNKNOWN")
+            ).upper()
+        )
+
+    def choose_spotlight_aircraft(
+        self,
+        aircraft,
+        positioned_aircraft,
+        nearest,
+    ):
+        # Highest priority: emergency squawks.
+        for plane in aircraft:
+            squawk = str(
+                getattr(plane, "squawk", "")
+            ).strip()
+
+            if squawk in ("7500", "7600", "7700"):
+                return plane, f"EMERGENCY SQUAWK {squawk}"
+
+        # Next: low aircraft, prioritising the closest.
+        low_aircraft = []
+
+        for plane in positioned_aircraft:
+            altitude = getattr(plane, "altitude", None)
+
+            if (
+                isinstance(altitude, (int, float))
+                and altitude <= 2000
+            ):
+                distance = self.distance_nm(
+                    config.HOME_LAT,
+                    config.HOME_LON,
+                    plane.latitude,
+                    plane.longitude,
+                )
+                low_aircraft.append((distance, plane))
+
+        if low_aircraft:
+            low_aircraft.sort(key=lambda item: item[0])
+            return low_aircraft[0][1], "LOW ALTITUDE"
+
+        if nearest is not None:
+            return nearest, "NEAREST AIRCRAFT"
+
+        return None, None
+
+    def update_aircraft_spotlight(
+        self,
+        aircraft,
+        positioned_aircraft,
+        nearest,
+    ):
+        spotlight, reason = self.choose_spotlight_aircraft(
+            aircraft,
+            positioned_aircraft,
+            nearest,
+        )
+
+        if spotlight is None:
+            self.spotlight_aircraft_hex = None
+            return
+
+        aircraft_hex = str(
+            getattr(spotlight, "hex", "")
+        ).lower()
+
+        if not aircraft_hex:
+            return
+
+        if aircraft_hex == self.spotlight_aircraft_hex:
+            return
+
+        self.spotlight_aircraft_hex = aircraft_hex
+
+        identity = self.aircraft_identity(spotlight)
+        altitude = getattr(spotlight, "altitude", None)
+
+        altitude_text = (
+            f"{altitude:,.0f} FT"
+            if isinstance(altitude, (int, float))
+            else "ALT --"
+        )
+
+        self.log_activity(
+            f"SPOTLIGHT  {identity}  {altitude_text}  {reason}"
+        )
+
+    def update_health_strip(
+        self,
+        receiver_running,
+        network_online,
+    ):
+        if not hasattr(self, "health_labels"):
+            return
+
+        adsb_colour = (
+            config.SUCCESS
+            if receiver_running
+            else config.DANGER
+        )
+
+        wifi_colour = (
+            config.SUCCESS
+            if network_online
+            else config.DANGER
+        )
+
+        target_colour = (
+            config.SUCCESS
+            if self.current_target is not None
+            else "#ffb000"
+        )
+
+        self.health_labels["ADS-B"].config(
+            fg=adsb_colour,
+        )
+        self.health_labels["WI-FI"].config(
+            fg=wifi_colour,
+        )
+        self.health_labels["TARGET"].config(
+            fg=target_colour,
+        )
+
+    def update_live_menu_cards(
+        self,
+        aircraft,
+        positioned,
+        nearest,
+        nearest_distance,
+        receiver_running,
+        network_online,
+    ):
+        radar_text = (
+            f"{len(aircraft)} aircraft • "
+            f"{positioned} positioned"
+        )
+
+        if nearest is not None:
+            nearest_identity = (
+                getattr(nearest, "callsign", None)
+                or getattr(nearest, "registration", None)
+                or str(
+                    getattr(nearest, "hex", "UNKNOWN")
+                ).upper()
+            )
+
+            nearest_text = (
+                f"Nearest {nearest_identity} • "
+                f"{nearest_distance:.1f} NM"
+            )
+        else:
+            nearest_text = "No positioned aircraft"
+
+        if self.current_target is not None:
+            target_identity = (
+                getattr(self.current_target, "callsign", None)
+                or getattr(
+                    self.current_target,
+                    "registration",
+                    None,
+                )
+                or str(
+                    getattr(
+                        self.current_target,
+                        "hex",
+                        "UNKNOWN",
+                    )
+                ).upper()
+            )
+            map_text = f"Tracking {target_identity}"
+        else:
+            map_text = "Tap an aircraft to begin tracking"
+
+        airband_text = (
+            "One-touch airport and suggested tuning"
+        )
+
+        adsb_text = (
+            "ADS-B online"
+            if receiver_running
+            else "ADS-B offline"
+        )
+
+        wifi_text = (
+            "Wi-Fi online"
+            if network_online
+            else "Wi-Fi offline"
+        )
+
+        status_values = {
+            "LIVE RADAR": radar_text,
+            "LIVE FLIGHTS": nearest_text,
+            "MOVING MAP": map_text,
+            "AIRBAND": airband_text,
+            "SETTINGS": f"{adsb_text} • {wifi_text}",
+        }
+
+        for title, value in status_values.items():
+            label = self.menu_status_labels.get(title)
+
+            if label is not None:
+                label.config(text=value)
+
     def update_status(self):
         try:
             aircraft = load_aircraft()
@@ -1808,6 +2456,7 @@ class Dashboard(tk.Frame):
             aircraft = []
 
         self.mini_radar.update_aircraft(aircraft)
+        self.check_emergency_squawks(aircraft)
 
         if self.selected_aircraft_hex is not None:
             refreshed_target = next(
@@ -1855,6 +2504,11 @@ class Dashboard(tk.Frame):
                 nearest = plane
                 nearest_distance = distance
 
+        self.update_aircraft_spotlight(
+            aircraft,
+            positioned_aircraft,
+            nearest,
+        )
 
         nearest_airport = None
         nearest_airport_distance = None
@@ -1877,8 +2531,28 @@ class Dashboard(tk.Frame):
         self.current_nearest_airport = nearest_airport
         self.current_airport_distance = nearest_airport_distance
 
-        receiver_running = os.path.exists(config.AIRCRAFT_JSON)
+        # Treat ADS-B as active whenever fresh aircraft data is
+        # successfully available. This keeps the health indicator
+        # consistent with the radar and aircraft counters.
+        receiver_running = (
+            bool(aircraft)
+            or os.path.exists(config.AIRCRAFT_JSON)
+        )
         network_online = self.wifi_connected()
+
+        self.update_live_menu_cards(
+            aircraft,
+            positioned,
+            nearest,
+            nearest_distance,
+            receiver_running,
+            network_online,
+        )
+
+        self.update_health_strip(
+            receiver_running,
+            network_online,
+        )
 
         self.aircraft_status.config(
             text=f"{len(aircraft)} RECEIVED / {positioned} POSITIONED"
