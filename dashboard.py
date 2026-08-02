@@ -25,6 +25,7 @@ class Dashboard(tk.Frame):
         self.menu_cards = []
         self.selected_aircraft_hex = None
         self.current_target = None
+        self.close_target_panel()
         self.current_nearest_airport = None
         self.current_airport_distance = None
 
@@ -533,15 +534,239 @@ class Dashboard(tk.Frame):
 
     def show_aircraft_details(self, aircraft):
         self.select_target(aircraft)
+        self.show_target_panel()
+
+    def show_target_panel(self):
+        aircraft = self.current_target
+
+        if aircraft is None:
+            return
+
+        if hasattr(self, "target_panel"):
+            try:
+                self.target_panel.destroy()
+            except tk.TclError:
+                pass
+
+        self.target_panel = tk.Frame(
+            self,
+            bg=config.BACKGROUND,
+            highlightthickness=2,
+            highlightbackground=config.ACCENT,
+            cursor="none",
+        )
+
+        self.target_panel.place(
+            relx=0.51,
+            rely=0.12,
+            relwidth=0.47,
+            relheight=0.82,
+        )
+        self.target_panel.lift()
+
+        header = tk.Frame(
+            self.target_panel,
+            bg=config.PANEL,
+            height=46,
+        )
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        tk.Label(
+            header,
+            text="TARGET AIRCRAFT",
+            bg=config.PANEL,
+            fg=config.ACCENT,
+            font=("DejaVu Sans", 13, "bold"),
+        ).pack(side="left", padx=12, pady=9)
+
+        tk.Button(
+            header,
+            text="CLOSE",
+            command=self.close_target_panel,
+            bg=config.DANGER,
+            fg="white",
+            activebackground="#B71C1C",
+            activeforeground="white",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 8, "bold"),
+            padx=12,
+            pady=4,
+            cursor="none",
+        ).pack(side="right", padx=7, pady=7)
+
+        self.target_identity = tk.Label(
+            self.target_panel,
+            text="--",
+            bg=config.BACKGROUND,
+            fg=config.TEXT,
+            font=("DejaVu Sans", 17, "bold"),
+        )
+        self.target_identity.pack(pady=(9, 5))
+
+        grid = tk.Frame(
+            self.target_panel,
+            bg=config.BACKGROUND,
+        )
+        grid.pack(
+            fill="both",
+            expand=True,
+            padx=8,
+            pady=4,
+        )
+
+        self.target_values = {}
+
+        fields = (
+            "ALTITUDE",
+            "SPEED",
+            "HEADING",
+            "VERTICAL RATE",
+            "DISTANCE",
+            "BEARING",
+            "SQUAWK",
+            "HEX",
+        )
+
+        for index, title in enumerate(fields):
+            card = tk.Frame(
+                grid,
+                bg=config.PANEL,
+                highlightthickness=1,
+                highlightbackground=config.DIM_TEXT,
+            )
+            card.grid(
+                row=index // 2,
+                column=index % 2,
+                sticky="nsew",
+                padx=3,
+                pady=3,
+            )
+
+            tk.Label(
+                card,
+                text=title,
+                bg=config.PANEL,
+                fg=config.DIM_TEXT,
+                font=("DejaVu Sans", 7, "bold"),
+            ).pack(anchor="w", padx=8, pady=(5, 0))
+
+            value = tk.Label(
+                card,
+                text="--",
+                bg=config.PANEL,
+                fg=config.TEXT,
+                font=("DejaVu Sans", 10, "bold"),
+            )
+            value.pack(anchor="w", padx=8, pady=(0, 5))
+
+            self.target_values[title] = value
+
+        for column in range(2):
+            grid.grid_columnconfigure(column, weight=1)
+
+        for row in range(4):
+            grid.grid_rowconfigure(row, weight=1)
+
+        actions = tk.Frame(
+            self.target_panel,
+            bg=config.BACKGROUND,
+        )
+        actions.pack(fill="x", padx=8, pady=(3, 8))
+
+        tk.Button(
+            actions,
+            text="MAP",
+            command=self.open_target_map,
+            bg=config.PANEL_LIGHT,
+            fg=config.ACCENT,
+            activebackground=config.ACCENT,
+            activeforeground="#000000",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            pady=7,
+            cursor="none",
+        ).pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=(0, 3),
+        )
+
+        tk.Button(
+            actions,
+            text="AIRBAND",
+            command=self.open_target_airband,
+            bg=config.PANEL_LIGHT,
+            fg=config.ACCENT,
+            activebackground=config.ACCENT,
+            activeforeground="#000000",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            pady=7,
+            cursor="none",
+        ).pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=3,
+        )
+
+        tk.Button(
+            actions,
+            text="CLEAR",
+            command=self.clear_target,
+            bg=config.PANEL_LIGHT,
+            fg=config.DANGER,
+            activebackground=config.DANGER,
+            activeforeground="white",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            pady=7,
+            cursor="none",
+        ).pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=(3, 0),
+        )
+
+        self.update_target_panel()
+
+    def update_target_panel(self):
+        if not hasattr(self, "target_panel"):
+            return
+
+        try:
+            if not self.target_panel.winfo_exists():
+                return
+        except tk.TclError:
+            return
+
+        aircraft = self.current_target
+
+        if aircraft is None:
+            return
+
+        identity = (
+            getattr(aircraft, "callsign", None)
+            or getattr(aircraft, "registration", None)
+            or getattr(aircraft, "hex", "UNKNOWN").upper()
+        )
+
         latitude = getattr(aircraft, "latitude", None)
         longitude = getattr(aircraft, "longitude", None)
 
         distance = None
         bearing = None
 
-        if isinstance(latitude, (int, float)) and isinstance(
-            longitude,
-            (int, float),
+        if (
+            isinstance(latitude, (int, float))
+            and isinstance(longitude, (int, float))
         ):
             distance = self.distance_nm(
                 config.HOME_LAT,
@@ -557,228 +782,72 @@ class Dashboard(tk.Frame):
                 longitude,
             )
 
-        window = tk.Toplevel(self)
-        window.configure(bg=config.BACKGROUND)
-        window.geometry("620x370+90+55")
-        window.overrideredirect(True)
-        window.attributes("-topmost", True)
+        altitude = getattr(aircraft, "altitude", None)
+        speed = getattr(aircraft, "speed", None)
+        heading = getattr(aircraft, "heading", None)
+        vertical_rate = getattr(aircraft, "vertical_rate", None)
 
-        identity = (
-            getattr(aircraft, "callsign", None)
-            or getattr(aircraft, "registration", None)
-            or getattr(aircraft, "hex", "UNKNOWN").upper()
-        )
-
-        header = tk.Frame(
-            window,
-            bg=config.PANEL,
-            height=52,
-        )
-        header.pack(fill="x")
-        header.pack_propagate(False)
-
-        tk.Label(
-            header,
-            text=f"AIRCRAFT  •  {identity}",
-            bg=config.PANEL,
-            fg=config.ACCENT,
-            font=("DejaVu Sans", 16, "bold"),
-        ).pack(side="left", padx=14, pady=10)
-
-        tk.Button(
-            header,
-            text="CLOSE",
-            command=window.destroy,
-            bg=config.DANGER,
-            fg="white",
-            activebackground="#B71C1C",
-            activeforeground="white",
-            relief="flat",
-            bd=0,
-            font=("DejaVu Sans", 9, "bold"),
-            padx=14,
-            pady=5,
-            cursor="none",
-        ).pack(side="right", padx=9, pady=8)
-
-        body = tk.Frame(
-            window,
-            bg=config.BACKGROUND,
-        )
-        body.pack(
-            fill="both",
-            expand=True,
-            padx=10,
-            pady=9,
-        )
-
-        values = (
-            (
-                "HEX",
-                str(getattr(aircraft, "hex", "--")).upper(),
+        values = {
+            "ALTITUDE": (
+                f"{altitude:,.0f} FT"
+                if isinstance(altitude, (int, float))
+                else "--"
             ),
-            (
-                "REGISTRATION",
-                str(getattr(aircraft, "registration", None) or "--"),
+            "SPEED": (
+                f"{speed:.0f} KT"
+                if isinstance(speed, (int, float))
+                else "--"
             ),
-            (
-                "ALTITUDE",
-                f'{aircraft.altitude:,.0f} FT'
-                if isinstance(
-                    getattr(aircraft, "altitude", None),
-                    (int, float),
-                )
-                else "--",
+            "HEADING": (
+                f"{heading:.0f}°"
+                if isinstance(heading, (int, float))
+                else "--"
             ),
-            (
-                "SPEED",
-                f'{aircraft.speed:.0f} KT'
-                if isinstance(
-                    getattr(aircraft, "speed", None),
-                    (int, float),
-                )
-                else "--",
+            "VERTICAL RATE": (
+                f"{vertical_rate:+.0f} FT/MIN"
+                if isinstance(vertical_rate, (int, float))
+                else "--"
             ),
-            (
-                "HEADING",
-                f'{aircraft.heading:.0f}°'
-                if isinstance(
-                    getattr(aircraft, "heading", None),
-                    (int, float),
-                )
-                else "--",
-            ),
-            (
-                "VERTICAL RATE",
-                f'{aircraft.vertical_rate:+.0f} FT/MIN'
-                if isinstance(
-                    getattr(aircraft, "vertical_rate", None),
-                    (int, float),
-                )
-                else "--",
-            ),
-            (
-                "DISTANCE",
+            "DISTANCE": (
                 f"{distance:.1f} NM"
                 if distance is not None
-                else "--",
+                else "--"
             ),
-            (
-                "BEARING",
+            "BEARING": (
                 f"{bearing:.0f}°"
                 if bearing is not None
-                else "--",
+                else "--"
             ),
-            (
-                "SQUAWK",
-                str(getattr(aircraft, "squawk", None) or "--"),
+            "SQUAWK": str(
+                getattr(aircraft, "squawk", None) or "--"
             ),
-        )
+            "HEX": str(
+                getattr(aircraft, "hex", "--")
+            ).upper(),
+        }
 
-        cards = tk.Frame(
-            body,
-            bg=config.BACKGROUND,
-        )
-        cards.pack(fill="both", expand=True)
+        self.target_identity.config(text=identity)
 
-        for index, (title, value) in enumerate(values):
-            card = tk.Frame(
-                cards,
-                bg=config.PANEL,
-                highlightthickness=1,
-                highlightbackground=config.DIM_TEXT,
-            )
-            card.grid(
-                row=index // 3,
-                column=index % 3,
-                sticky="nsew",
-                padx=3,
-                pady=3,
-            )
+        for title, value in values.items():
+            if title in self.target_values:
+                self.target_values[title].config(text=value)
 
-            tk.Label(
-                card,
-                text=title,
-                bg=config.PANEL,
-                fg=config.DIM_TEXT,
-                font=("DejaVu Sans", 7, "bold"),
-            ).pack(
-                anchor="w",
-                padx=8,
-                pady=(6, 0),
-            )
+    def close_target_panel(self):
+        if hasattr(self, "target_panel"):
+            try:
+                self.target_panel.destroy()
+            except tk.TclError:
+                pass
 
-            tk.Label(
-                card,
-                text=value,
-                bg=config.PANEL,
-                fg=config.TEXT,
-                font=("DejaVu Sans", 10, "bold"),
-            ).pack(
-                anchor="w",
-                padx=8,
-                pady=(1, 6),
-            )
+            del self.target_panel
 
-        for column in range(3):
-            cards.grid_columnconfigure(column, weight=1)
+    def open_target_map(self):
+        self.close_target_panel()
+        self.run_action(self.show_map)
 
-        for row in range(3):
-            cards.grid_rowconfigure(row, weight=1)
-
-        actions = tk.Frame(
-            body,
-            bg=config.BACKGROUND,
-        )
-        actions.pack(fill="x", pady=(6, 0))
-
-        def open_map():
-            window.destroy()
-            self.run_action(self.show_map)
-
-        def open_airband():
-            window.destroy()
-            self.run_action(self.show_airband)
-
-        tk.Button(
-            actions,
-            text="OPEN MOVING MAP",
-            command=open_map,
-            bg=config.PANEL_LIGHT,
-            fg=config.ACCENT,
-            activebackground=config.ACCENT,
-            activeforeground="#000000",
-            relief="flat",
-            bd=0,
-            font=("DejaVu Sans", 9, "bold"),
-            pady=7,
-            cursor="none",
-        ).pack(
-            side="left",
-            fill="x",
-            expand=True,
-            padx=(0, 4),
-        )
-
-        tk.Button(
-            actions,
-            text="OPEN AIRBAND",
-            command=open_airband,
-            bg=config.PANEL_LIGHT,
-            fg=config.ACCENT,
-            activebackground=config.ACCENT,
-            activeforeground="#000000",
-            relief="flat",
-            bd=0,
-            font=("DejaVu Sans", 9, "bold"),
-            pady=7,
-            cursor="none",
-        ).pack(
-            side="left",
-            fill="x",
-            expand=True,
-            padx=(4, 0),
-        )
+    def open_target_airband(self):
+        self.close_target_panel()
+        self.run_action(self.show_airband)
 
     def update_target_display(self):
         aircraft = self.current_target
@@ -850,6 +919,8 @@ class Dashboard(tk.Frame):
         self.nearest_status.indicator.config(
             fg="#ffb000",
         )
+
+        self.update_target_panel()
 
     def update_clock(self):
         now = datetime.now(timezone.utc)
