@@ -1,13 +1,17 @@
 import tkinter as tk
 
 import config
+from airband import AirbandScreen
 from audio import AudioController
 from bootscreen import BootScreen
 from dashboard import Dashboard
+from developer import DeveloperScreen
 from flights import FlightsScreen
 from homescreen import HomeScreen
 from map import MapScreen
+from navbar import NavigationBar
 from radar import RadarScreen
+from settings import SettingsScreen
 
 
 class FalconDeck(tk.Tk):
@@ -63,7 +67,12 @@ class FalconDeck(tk.Tk):
             show_radar=self.show_radar,
             show_flights=self.show_flights,
             show_map=self.show_map,
+            show_airband=self.show_airband,
+            show_settings=self.show_settings,
+            show_developer=self.show_developer,
             close_app=self.close_app,
+            tune_airband=self.tune_airband,
+            play_click=self.audio.play_click,
         )
 
         self.radar = RadarScreen(
@@ -81,15 +90,61 @@ class FalconDeck(tk.Tk):
             show_dashboard=self.show_dashboard,
         )
 
+        self.airband = AirbandScreen(
+            self.container,
+            show_dashboard=self.show_dashboard,
+        )
+
+        self.settings = SettingsScreen(
+            self.container,
+            show_dashboard=self.show_dashboard,
+        )
+
+        self.developer = DeveloperScreen(
+            self.container,
+            show_dashboard=self.show_dashboard,
+        )
+
         for page in (
             self.dashboard,
             self.radar,
             self.flights,
             self.map_screen,
+            self.airband,
+            self.settings,
+            self.developer,
         ):
             page.grid(row=0, column=0, sticky="nsew")
             page.configure(cursor="none")
 
+
+        self.navbar = NavigationBar(
+            self,
+            show_home=self.show_dashboard,
+            show_radar=self.show_radar,
+            show_map=self.show_map,
+            show_flights=self.show_flights,
+            show_airband=self.show_airband,
+            show_settings=self.show_settings,
+            show_developer=self.show_developer,
+            play_click=self.audio.play_click,
+        )
+        # Repack both widgets so the navbar always reserves
+        # the bottom 52 pixels of the display.
+        self.container.pack_forget()
+
+        self.navbar.pack(
+            side="bottom",
+            fill="x",
+        )
+
+        self.container.pack(
+            side="top",
+            fill="both",
+            expand=True,
+        )
+
+        self.navbar.lift()
         self.show_dashboard()
 
     def force_fullscreen(self):
@@ -107,20 +162,76 @@ class FalconDeck(tk.Tk):
         self.focus_force()
 
     def show_dashboard(self):
+        self.airband.stop_listening()
+        self.airband.start_adsb()
         self.dashboard.tkraise()
         self.dashboard.focus_set()
 
+        if hasattr(self, "navbar"):
+            self.navbar.set_active("HOME")
+
     def show_radar(self):
+        self.airband.stop_listening()
+        self.airband.start_adsb()
         self.radar.tkraise()
         self.radar.focus_set()
 
+        if hasattr(self, "navbar"):
+            self.navbar.set_active("RADAR")
+
     def show_flights(self):
+        self.airband.stop_listening()
+        self.airband.start_adsb()
         self.flights.tkraise()
         self.flights.focus_set()
 
+        if hasattr(self, "navbar"):
+            self.navbar.set_active("FLIGHTS")
+
     def show_map(self):
+        self.airband.stop_listening()
+        self.airband.start_adsb()
         self.map_screen.tkraise()
         self.map_screen.focus_set()
+
+        if hasattr(self, "navbar"):
+            self.navbar.set_active("MAP")
+
+    def tune_airband(self, frequency):
+        self.show_airband()
+        self.airband.set_frequency(frequency)
+
+        # Allow the Airband page to appear before starting.
+        self.after(
+            300,
+            self.airband.start_listening,
+        )
+
+    def show_airband(self):
+        self.airband.tkraise()
+        self.airband.focus_set()
+
+        if hasattr(self, "navbar"):
+            self.navbar.set_active("AIRBAND")
+
+    def show_settings(self):
+        self.airband.stop_listening()
+        self.airband.start_adsb()
+        self.settings.tkraise()
+        self.settings.focus_set()
+
+        if hasattr(self, "navbar"):
+            self.navbar.set_active("SETTINGS")
+
+    def show_developer(self):
+        self.airband.stop_listening()
+        self.airband.start_adsb()
+        self.developer.tkraise()
+        self.developer.focus_set()
+        self.developer.update_status()
+
+        if hasattr(self, "navbar"):
+            self.navbar.set_active("DEV")
 
     def leave_fullscreen(self, event=None):
         self.fullscreen = False

@@ -11,13 +11,14 @@ from mini_radar import MiniRadar
 
 
 class Dashboard(tk.Frame):
-    def __init__(self, parent, show_radar, show_flights, show_map, show_airband, show_settings, show_developer, close_app, play_click=None):
+    def __init__(self, parent, show_radar, show_flights, show_map, show_airband, show_settings, show_developer, close_app, tune_airband=None, play_click=None):
         super().__init__(parent, bg=config.BACKGROUND, cursor="none")
 
         self.show_radar = show_radar
         self.show_flights = show_flights
         self.show_map = show_map
         self.show_airband = show_airband
+        self.tune_airband = tune_airband
         self.show_settings = show_settings
         self.show_developer = show_developer
         self.close_app = close_app
@@ -25,6 +26,12 @@ class Dashboard(tk.Frame):
         self.menu_cards = []
         self.selected_aircraft_hex = None
         self.current_target = None
+        self.target_previous_distance = None
+        self.target_motion = "CALCULATING"
+        self.current_target_airport = None
+        self.current_target_airport_distance = None
+        self.suggested_radio_service = None
+        self.suggested_radio_frequency = None
         self.close_target_panel()
         self.current_nearest_airport = None
         self.current_airport_distance = None
@@ -517,7 +524,13 @@ class Dashboard(tk.Frame):
         aircraft_hex = getattr(aircraft, "hex", None)
 
         if aircraft_hex:
-            self.selected_aircraft_hex = aircraft_hex.lower()
+            new_hex = aircraft_hex.lower()
+
+            if new_hex != self.selected_aircraft_hex:
+                self.target_previous_distance = None
+                self.target_motion = "CALCULATING"
+
+            self.selected_aircraft_hex = new_hex
             self.current_target = aircraft
             self.update_target_display()
 
@@ -617,7 +630,75 @@ class Dashboard(tk.Frame):
         self.sky_pointer.pack(
             fill="x",
             padx=8,
-            pady=(1, 3),
+            pady=(1, 2),
+        )
+
+        self.target_motion_label = tk.Label(
+            self.target_panel,
+            text="MOTION  •  CALCULATING",
+            bg=config.BACKGROUND,
+            fg=config.DIM_TEXT,
+            font=("DejaVu Sans", 8, "bold"),
+            cursor="none",
+        )
+        self.target_motion_label.pack(
+            fill="x",
+            padx=8,
+            pady=(0, 2),
+        )
+
+        self.target_airport_label = tk.Label(
+            self.target_panel,
+            text="NEAREST AIRPORT  •  CALCULATING",
+            bg=config.BACKGROUND,
+            fg=config.DIM_TEXT,
+            font=("DejaVu Sans", 8, "bold"),
+            cursor="none",
+        )
+        self.target_airport_label.pack(
+            fill="x",
+            padx=8,
+            pady=(0, 2),
+        )
+
+        self.target_airport_label.bind(
+            "<ButtonRelease-1>",
+            self.open_target_airport,
+        )
+
+        self.frequency_suggestion_button = tk.Button(
+            self.target_panel,
+            text="SUGGESTED RADIO  •  CALCULATING",
+            command=self.tune_suggested_frequency,
+            bg="#10202c",
+            fg="#ffb000",
+            activebackground="#ffb000",
+            activeforeground="#000000",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 8, "bold"),
+            pady=5,
+            cursor="none",
+            state="disabled",
+        )
+        self.frequency_suggestion_button.pack(
+            fill="x",
+            padx=8,
+            pady=(0, 2),
+        )
+
+        self.flight_phase_label = tk.Label(
+            self.target_panel,
+            text="FLIGHT PHASE  •  CALCULATING",
+            bg=config.BACKGROUND,
+            fg=config.DIM_TEXT,
+            font=("DejaVu Sans", 8, "bold"),
+            cursor="none",
+        )
+        self.flight_phase_label.pack(
+            fill="x",
+            padx=8,
+            pady=(0, 3),
         )
 
         grid = tk.Frame(
@@ -786,6 +867,310 @@ class Dashboard(tk.Frame):
             )
         )
 
+    @staticmethod
+    def airport_value(airport, *names):
+        for name in names:
+            if isinstance(airport, dict) and name in airport:
+                return airport[name]
+
+            if hasattr(airport, name):
+                return getattr(airport, name)
+
+        return None
+
+    def nearest_airport_to_position(self, latitude, longitude):
+        nearest = None
+        nearest_distance = None
+
+        for airport in AIRPORTS:
+            airport_lat = self.airport_value(
+                airport,
+                "lat",
+                "latitude",
+            )
+            airport_lon = self.airport_value(
+                airport,
+                "lon",
+                "longitude",
+            )
+
+            if not isinstance(airport_lat, (int, float)):
+                continue
+
+            if not isinstance(airport_lon, (int, float)):
+                continue
+
+            distance = self.distance_nm(
+                latitude,
+                longitude,
+                airport_lat,
+                airport_lon,
+            )
+
+            if (
+                nearest_distance is None
+                or distance < nearest_distance
+            ):
+                nearest = airport
+                nearest_distance = distance
+
+        return nearest, nearest_distance
+
+    def suggest_airport_frequency(
+        self,
+        airport,
+        altitude,
+        vertical_rate,
+    ):
+        if airport is None:
+            return None, None
+
+        icao = self.airport_value(
+            airport,
+            "icao",
+            "ident",
+            "code",
+        )
+
+        frequencies = self.airport_frequencies(icao)
+
+        if not frequencies:
+            return None, None
+
+        available = {
+            str(service).upper(): frequency
+            for service, frequency in frequencies
+        }
+
+        if not isinstance(altitude, (int, float)):
+            preferred = (
+                "APPROACH",
+                "TOWER",
+                "GROUND",
+                "ATIS",
+            )
+        elif altitude <= 1500:
+            preferred = (
+                "GROUND",
+                "TOWER",
+                "APPROACH",
+                "ATIS",
+            )
+        elif altitude <= 3500:
+            preferred = (
+                "TOWER",
+                "APPROACH",
+                "GROUND",
+                "ATIS",
+            )
+        elif altitude <= 12000:
+            # Descending aircraft are more likely to be on approach.
+            if (
+                isinstance(vertical_rate, (int, float))
+                and vertical_rate < -200
+            ):
+                preferred = (
+                    "APPROACH",
+                    "TOWER",
+                    "ATIS",
+                    "GROUND",
+                )
+            else:
+                preferred = (
+                    "APPROACH",
+                    "TOWER",
+                    "GROUND",
+                    "ATIS",
+                )
+        else:
+            preferred = (
+                "APPROACH",
+                "TOWER",
+                "ATIS",
+                "GROUND",
+            )
+
+        for service in preferred:
+            if service in available:
+                return service, available[service]
+
+        service, frequency = frequencies[0]
+        return service, frequency
+
+    def update_frequency_suggestion(
+        self,
+        airport,
+        altitude,
+        vertical_rate,
+    ):
+        (
+            service,
+            frequency,
+        ) = self.suggest_airport_frequency(
+            airport,
+            altitude,
+            vertical_rate,
+        )
+
+        self.suggested_radio_service = service
+        self.suggested_radio_frequency = frequency
+
+        if not hasattr(
+            self,
+            "frequency_suggestion_button",
+        ):
+            return
+
+        if service is None or frequency is None:
+            self.frequency_suggestion_button.config(
+                text="SUGGESTED RADIO  •  NO FREQUENCY DATA",
+                state="disabled",
+                fg=config.DIM_TEXT,
+            )
+            return
+
+        self.frequency_suggestion_button.config(
+            text=(
+                f"SUGGESTED RADIO  •  "
+                f"{service}  {frequency:.3f} MHz  •  TAP TO TUNE"
+            ),
+            state="normal",
+            fg="#ffb000",
+        )
+
+    def tune_suggested_frequency(self):
+        frequency = self.suggested_radio_frequency
+
+        if not isinstance(frequency, (int, float)):
+            return
+
+        self.close_target_panel()
+
+        if self.tune_airband:
+            self.tune_airband(frequency)
+        else:
+            self.run_action(self.show_airband)
+
+    @staticmethod
+    def estimate_flight_phase(
+        altitude,
+        speed,
+        vertical_rate,
+        airport_distance,
+    ):
+        altitude_ok = isinstance(
+            altitude,
+            (int, float),
+        )
+        speed_ok = isinstance(
+            speed,
+            (int, float),
+        )
+        vertical_ok = isinstance(
+            vertical_rate,
+            (int, float),
+        )
+        distance_ok = isinstance(
+            airport_distance,
+            (int, float),
+        )
+
+        if speed_ok and speed < 45:
+            return "TAXI / GROUND"
+
+        if altitude_ok and altitude < 1500:
+            if vertical_ok and vertical_rate > 500:
+                return "TAKEOFF / INITIAL CLIMB"
+
+            if (
+                distance_ok
+                and airport_distance < 4
+                and vertical_ok
+                and vertical_rate < -250
+            ):
+                return "FINAL APPROACH"
+
+            if distance_ok and airport_distance < 6:
+                return "AIRPORT CIRCUIT"
+
+        if altitude_ok and altitude < 5000:
+            if vertical_ok and vertical_rate > 400:
+                return "CLIMBING"
+
+            if vertical_ok and vertical_rate < -400:
+                if distance_ok and airport_distance < 12:
+                    return "APPROACH"
+
+                return "DESCENDING"
+
+        if altitude_ok and altitude < 12000:
+            if vertical_ok and vertical_rate > 400:
+                return "CLIMBING"
+
+            if vertical_ok and vertical_rate < -400:
+                if distance_ok and airport_distance < 20:
+                    return "APPROACH"
+
+                return "DESCENDING"
+
+            return "LEVEL FLIGHT"
+
+        if altitude_ok and altitude >= 12000:
+            if vertical_ok and vertical_rate > 500:
+                return "CLIMBING"
+
+            if vertical_ok and vertical_rate < -500:
+                return "DESCENDING"
+
+            return "CRUISE"
+
+        if vertical_ok:
+            if vertical_rate > 400:
+                return "CLIMBING"
+
+            if vertical_rate < -400:
+                return "DESCENDING"
+
+        return "UNKNOWN"
+
+    def update_flight_phase(
+        self,
+        altitude,
+        speed,
+        vertical_rate,
+        airport_distance,
+    ):
+        phase = self.estimate_flight_phase(
+            altitude,
+            speed,
+            vertical_rate,
+            airport_distance,
+        )
+
+        if not hasattr(self, "flight_phase_label"):
+            return
+
+        colours = {
+            "TAXI / GROUND": "#ffb000",
+            "TAKEOFF / INITIAL CLIMB": config.SUCCESS,
+            "CLIMBING": config.SUCCESS,
+            "CRUISE": config.ACCENT,
+            "LEVEL FLIGHT": config.ACCENT,
+            "DESCENDING": "#ffb000",
+            "APPROACH": "#ffb000",
+            "FINAL APPROACH": config.DANGER,
+            "AIRPORT CIRCUIT": "#ffb000",
+            "UNKNOWN": config.DIM_TEXT,
+        }
+
+        self.flight_phase_label.config(
+            text=f"FLIGHT PHASE  •  {phase}",
+            fg=colours.get(
+                phase,
+                config.DIM_TEXT,
+            ),
+        )
+
     def update_target_panel(self):
         if not hasattr(self, "target_panel"):
             return
@@ -831,6 +1216,36 @@ class Dashboard(tk.Frame):
                 longitude,
             )
 
+            (
+                nearest_airport,
+                nearest_airport_distance,
+            ) = self.nearest_airport_to_position(
+                latitude,
+                longitude,
+            )
+
+            self.current_target_airport = nearest_airport
+            self.current_target_airport_distance = (
+                nearest_airport_distance
+            )
+
+        if distance is not None:
+            if self.target_previous_distance is None:
+                self.target_motion = "CALCULATING"
+            else:
+                difference = (
+                    distance - self.target_previous_distance
+                )
+
+                if difference < -0.08:
+                    self.target_motion = "APPROACHING"
+                elif difference > 0.08:
+                    self.target_motion = "MOVING AWAY"
+                else:
+                    self.target_motion = "STEADY"
+
+            self.target_previous_distance = distance
+
         altitude = getattr(aircraft, "altitude", None)
 
         direction = (
@@ -857,9 +1272,68 @@ class Dashboard(tk.Frame):
                     f"ELEVATION {elevation_text}"
                 )
             )
+
+        if hasattr(self, "target_airport_label"):
+            if nearest_airport is not None:
+                icao = self.airport_value(
+                    nearest_airport,
+                    "icao",
+                    "ident",
+                    "code",
+                ) or "----"
+
+                name = self.airport_value(
+                    nearest_airport,
+                    "name",
+                    "airport",
+                    "title",
+                ) or "UNKNOWN AIRPORT"
+
+                self.target_airport_label.config(
+                    text=(
+                        f"NEAREST AIRPORT  •  {icao}  "
+                        f"{name}  •  "
+                        f"{nearest_airport_distance:.1f} NM"
+                    ),
+                    fg=config.ACCENT,
+                )
+            else:
+                self.target_airport_label.config(
+                    text="NEAREST AIRPORT  •  NO DATA",
+                    fg=config.DIM_TEXT,
+                )
+
+        if hasattr(self, "target_motion_label"):
+            motion_colours = {
+                "APPROACHING": config.SUCCESS,
+                "MOVING AWAY": "#ffb000",
+                "STEADY": config.ACCENT,
+                "CALCULATING": config.DIM_TEXT,
+            }
+
+            self.target_motion_label.config(
+                text=f"MOTION  •  {self.target_motion}",
+                fg=motion_colours.get(
+                    self.target_motion,
+                    config.DIM_TEXT,
+                ),
+            )
         speed = getattr(aircraft, "speed", None)
         heading = getattr(aircraft, "heading", None)
         vertical_rate = getattr(aircraft, "vertical_rate", None)
+
+        self.update_frequency_suggestion(
+            nearest_airport,
+            altitude,
+            vertical_rate,
+        )
+
+        self.update_flight_phase(
+            altitude,
+            speed,
+            vertical_rate,
+            nearest_airport_distance,
+        )
 
         values = {
             "ALTITUDE": (
@@ -905,6 +1379,271 @@ class Dashboard(tk.Frame):
         for title, value in values.items():
             if title in self.target_values:
                 self.target_values[title].config(text=value)
+
+    @staticmethod
+    def airport_frequencies(icao):
+        frequencies = {
+            "EGGW": (
+                ("TOWER", 129.550),
+                ("APPROACH", 129.025),
+                ("GROUND", 121.805),
+                ("ATIS", 120.575),
+            ),
+            "EGLL": (
+                ("TOWER", 118.500),
+                ("APPROACH", 119.725),
+            ),
+            "EGKK": (
+                ("TOWER", 124.225),
+                ("APPROACH", 126.825),
+            ),
+            "EGSS": (
+                ("TOWER", 123.800),
+                ("APPROACH", 120.625),
+            ),
+        }
+
+        return frequencies.get(str(icao).upper(), ())
+
+    def tune_airport_frequency(self, window, frequency):
+        try:
+            window.destroy()
+        except tk.TclError:
+            pass
+
+        self.close_target_panel()
+
+        if self.tune_airband:
+            self.tune_airband(frequency)
+        else:
+            self.run_action(self.show_airband)
+
+    def open_target_airport(self, event=None):
+        airport = self.current_target_airport
+        distance = self.current_target_airport_distance
+
+        if airport is None:
+            return
+
+        icao = self.airport_value(
+            airport,
+            "icao",
+            "ident",
+            "code",
+        ) or "----"
+
+        name = self.airport_value(
+            airport,
+            "name",
+            "airport",
+            "title",
+        ) or "UNKNOWN AIRPORT"
+
+        latitude = self.airport_value(
+            airport,
+            "lat",
+            "latitude",
+        )
+
+        longitude = self.airport_value(
+            airport,
+            "lon",
+            "longitude",
+        )
+
+        window = tk.Toplevel(self)
+        window.configure(bg=config.BACKGROUND)
+        window.geometry("560x330+120+70")
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+
+        header = tk.Frame(
+            window,
+            bg=config.PANEL,
+            height=52,
+        )
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        tk.Label(
+            header,
+            text=f"AIRPORT  •  {icao}",
+            bg=config.PANEL,
+            fg=config.ACCENT,
+            font=("DejaVu Sans", 16, "bold"),
+        ).pack(side="left", padx=14, pady=10)
+
+        tk.Button(
+            header,
+            text="CLOSE",
+            command=window.destroy,
+            bg=config.DANGER,
+            fg="white",
+            activebackground="#B71C1C",
+            activeforeground="white",
+            relief="flat",
+            bd=0,
+            font=("DejaVu Sans", 9, "bold"),
+            padx=14,
+            pady=5,
+            cursor="none",
+        ).pack(side="right", padx=9, pady=8)
+
+        body = tk.Frame(
+            window,
+            bg=config.BACKGROUND,
+        )
+        body.pack(
+            fill="both",
+            expand=True,
+            padx=12,
+            pady=10,
+        )
+
+        tk.Label(
+            body,
+            text=name,
+            bg=config.BACKGROUND,
+            fg=config.TEXT,
+            font=("DejaVu Sans", 17, "bold"),
+            wraplength=520,
+        ).pack(pady=(4, 12))
+
+        details = (
+            (
+                "DISTANCE FROM AIRCRAFT",
+                f"{distance:.1f} NM"
+                if isinstance(distance, (int, float))
+                else "--",
+            ),
+            (
+                "ICAO",
+                str(icao),
+            ),
+            (
+                "LATITUDE",
+                f"{latitude:.5f}"
+                if isinstance(latitude, (int, float))
+                else "--",
+            ),
+            (
+                "LONGITUDE",
+                f"{longitude:.5f}"
+                if isinstance(longitude, (int, float))
+                else "--",
+            ),
+        )
+
+        cards = tk.Frame(
+            body,
+            bg=config.BACKGROUND,
+        )
+        cards.pack(fill="both", expand=True)
+
+        for index, (title, value) in enumerate(details):
+            card = tk.Frame(
+                cards,
+                bg=config.PANEL,
+                highlightthickness=1,
+                highlightbackground=config.DIM_TEXT,
+            )
+            card.grid(
+                row=index // 2,
+                column=index % 2,
+                sticky="nsew",
+                padx=4,
+                pady=4,
+            )
+
+            tk.Label(
+                card,
+                text=title,
+                bg=config.PANEL,
+                fg=config.DIM_TEXT,
+                font=("DejaVu Sans", 7, "bold"),
+            ).pack(anchor="w", padx=9, pady=(7, 0))
+
+            tk.Label(
+                card,
+                text=value,
+                bg=config.PANEL,
+                fg=config.TEXT,
+                font=("DejaVu Sans", 11, "bold"),
+            ).pack(anchor="w", padx=9, pady=(1, 7))
+
+        for column in range(2):
+            cards.grid_columnconfigure(column, weight=1)
+
+        for row in range(2):
+            cards.grid_rowconfigure(row, weight=1)
+
+        frequency_list = self.airport_frequencies(icao)
+
+        if frequency_list:
+            frequency_panel = tk.Frame(
+                body,
+                bg=config.BACKGROUND,
+            )
+            frequency_panel.pack(fill="x", pady=(8, 0))
+
+            for index, (service, frequency) in enumerate(
+                frequency_list
+            ):
+                button = tk.Button(
+                    frequency_panel,
+                    text=f"{service}\n{frequency:.3f}",
+                    command=lambda value=frequency: (
+                        self.tune_airport_frequency(
+                            window,
+                            value,
+                        )
+                    ),
+                    bg=config.PANEL_LIGHT,
+                    fg=config.ACCENT,
+                    activebackground=config.ACCENT,
+                    activeforeground="#000000",
+                    relief="flat",
+                    bd=0,
+                    font=("DejaVu Sans", 8, "bold"),
+                    pady=6,
+                    cursor="none",
+                )
+                button.grid(
+                    row=0,
+                    column=index,
+                    sticky="nsew",
+                    padx=2,
+                )
+                frequency_panel.grid_columnconfigure(
+                    index,
+                    weight=1,
+                )
+        else:
+            tk.Button(
+                body,
+                text="OPEN AIRBAND",
+                command=lambda: self.open_airport_airband(
+                    window
+                ),
+                bg=config.PANEL_LIGHT,
+                fg=config.ACCENT,
+                activebackground=config.ACCENT,
+                activeforeground="#000000",
+                relief="flat",
+                bd=0,
+                font=("DejaVu Sans", 10, "bold"),
+                pady=8,
+                cursor="none",
+            ).pack(fill="x", pady=(8, 0))
+
+    def open_airport_airband(self, window):
+        try:
+            window.destroy()
+        except tk.TclError:
+            pass
+
+        self.close_target_panel()
+        self.run_action(self.show_airband)
 
     def close_target_panel(self):
         if hasattr(self, "target_panel"):

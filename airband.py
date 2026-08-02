@@ -1,7 +1,9 @@
 import shutil
 import subprocess
 import threading
+import time
 import wave
+import audioop
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +17,8 @@ class AirbandScreen(tk.Frame):
         self.show_dashboard = show_dashboard
         self.rtl_process = None
         self.audio_process = None
+        self.receiving_transmission = False
+        self.last_signal_time = 0.0
         self.audio_thread = None
         self.recording = False
         self.recording_file = None
@@ -129,6 +133,24 @@ class AirbandScreen(tk.Frame):
             pady=5,
         )
         self.frequency_label.pack(fill="x", pady=(5, 3))
+
+        self.audio_level = tk.IntVar(value=0)
+
+        self.level = tk.Scale(
+            body,
+            from_=100,
+            to=0,
+            orient="horizontal",
+            variable=self.audio_level,
+            state="disabled",
+            showvalue=False,
+            length=520,
+            bg=config.PANEL,
+            troughcolor=config.PANEL_LIGHT,
+            highlightthickness=0,
+        )
+        self.level.pack(fill="x", pady=(4,8))
+
 
         preset_panel = tk.Frame(
             body,
@@ -396,7 +418,7 @@ class AirbandScreen(tk.Frame):
                     f"{volume}%",
                 ],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 timeout=3,
             )
         except (OSError, subprocess.SubprocessError):
@@ -424,7 +446,7 @@ class AirbandScreen(tk.Frame):
         )
 
         if was_listening:
-            self.after(350, self.start_listening)
+            self.after(1200, self.start_listening)
 
     def change_frequency(self, amount):
         self.frequency = min(
@@ -440,7 +462,7 @@ class AirbandScreen(tk.Frame):
             self.root_after_start()
 
     def root_after_start(self):
-        self.after(250, self.start_listening)
+        self.after(1200, self.start_listening)
 
     def stop_adsb(self):
         try:
@@ -519,14 +541,14 @@ class AirbandScreen(tk.Frame):
                     "-E", "dc",
                 ],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
             )
 
             self.audio_process = subprocess.Popen(
                 [
                     "aplay",
                     "--quiet",
-                    "-D", "default",
+                    "-D", "plughw:2,0",
                     "-t", "raw",
                     "-f", "S16_LE",
                     "-r", "12000",
@@ -745,6 +767,22 @@ class AirbandScreen(tk.Frame):
                 except (BrokenPipeError, OSError):
                     break
 
+                try:
+                    level = audioop.rms(chunk, 2)
+                    self.after(
+                        0,
+                        self.update_audio_activity,
+                        level,
+                    )
+                except Exception:
+                    pass
+
+                try:
+                    level = audioop.rms(chunk, 2)
+                    self.audio_level.set(min(level // 120, 100))
+                except Exception:
+                    pass
+
                 if self.recording and self.wave_writer is not None:
                     try:
                         self.wave_writer.writeframes(chunk)
@@ -759,6 +797,74 @@ class AirbandScreen(tk.Frame):
                     self.audio_process.stdin.close()
                 except OSError:
                     pass
+
+    def update_audio_activity(self, raw_level):
+        if self.rtl_process is None:
+            return
+
+        try:
+            meter_level = min(
+                max(int(raw_level / 120), 0),
+                100,
+            )
+        except (TypeError, ValueError):
+            meter_level = 0
+
+        if hasattr(self, "audio_level"):
+            self.audio_level.set(meter_level)
+
+        now = time.monotonic()
+
+        # Adjust 18 higher if ordinary hiss triggers it too often.
+        if meter_level >= 18:
+            self.last_signal_time = now
+
+            if not self.receiving_transmission:
+                self.receiving_transmission = True
+
+            self.message.config(
+                text=(
+                    f"RECEIVING TRANSMISSION  •  "
+                    f"{self.frequency:.3f} MHz"
+                ),
+                fg=config.SUCCESS,
+            )
+
+            self.listen_button.config(
+                text="RECEIVING",
+                bg=config.SUCCESS,
+                fg="#000000",
+            )
+
+        elif (
+            self.receiving_transmission
+            and now - self.last_signal_time > 0.8
+        ):
+            self.receiving_transmission = False
+
+            if self.recording:
+                status = (
+                    f"RECORDING  •  "
+                    f"{self.frequency:.3f} MHz"
+                )
+                colour = config.DANGER
+            else:
+                status = (
+                    f"LISTENING  •  "
+                    f"{self.frequency:.3f} MHz AM"
+                )
+                colour = config.SUCCESS
+
+            self.message.config(
+                text=status,
+                fg=colour,
+            )
+
+            self.listen_button.config(
+                text="LISTENING",
+                bg=config.SUCCESS,
+                fg="#000000",
+            )
 
     def toggle_recording(self):
         if self.recording:
@@ -863,7 +969,7 @@ class AirbandScreen(tk.Frame):
         elif "no supported devices" in error_text.lower():
             message = "RTL-SDR NOT DETECTED"
         else:
-            message = "RECEIVER STOPPED"
+            message = f"RECEIVER EXIT {return_code}"
 
         self.message.config(
             text=message,
@@ -875,11 +981,25 @@ class AirbandScreen(tk.Frame):
             self.stop_recording()
 
         for process in (self.audio_process, self.rtl_process):
-            if process is not None and process.poll() is None:
+            if process is None or process.poll() is not None:
+                continue
+
+            try:
                 process.terminate()
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+            except OSError:
+                pass
 
         self.audio_process = None
         self.rtl_process = None
+        self.receiving_transmission = False
+        self.last_signal_time = 0.0
+
+        if hasattr(self, "audio_level"):
+            self.audio_level.set(0)
 
         if hasattr(self, "listen_button"):
             self.listen_button.config(
