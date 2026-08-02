@@ -70,15 +70,53 @@ class AirbandScreen(tk.Frame):
             bg=config.BACKGROUND,
             cursor="none",
         )
-        body.pack(fill="both", expand=True, padx=16, pady=14)
+        body.pack(fill="both", expand=True, padx=12, pady=6)
 
-        self.sdr_status = self.status_card(
+        status_strip = tk.Frame(
             body,
-            "RTL-SDR RECEIVER",
+            bg=config.BACKGROUND,
+        )
+        status_strip.pack(fill="x", pady=(0, 4))
+
+        def compact_status(parent, title):
+            frame = tk.Frame(
+                parent,
+                bg=config.PANEL,
+                highlightthickness=1,
+                highlightbackground=config.DIM_TEXT,
+            )
+            frame.pack(
+                side="left",
+                fill="x",
+                expand=True,
+                padx=3,
+            )
+
+            tk.Label(
+                frame,
+                text=title,
+                bg=config.PANEL,
+                fg=config.DIM_TEXT,
+                font=("DejaVu Sans", 7, "bold"),
+            ).pack(anchor="w", padx=9, pady=(5, 0))
+
+            value = tk.Label(
+                frame,
+                text="CHECKING",
+                bg=config.PANEL,
+                fg=config.TEXT,
+                font=("DejaVu Sans", 9, "bold"),
+            )
+            value.pack(anchor="w", padx=9, pady=(0, 5))
+            return value
+
+        self.sdr_status = compact_status(
+            status_strip,
+            "RTL-SDR",
         )
 
-        self.audio_status = self.status_card(
-            body,
+        self.audio_status = compact_status(
+            status_strip,
             "USB AUDIO",
         )
 
@@ -87,8 +125,8 @@ class AirbandScreen(tk.Frame):
             text="121.500 MHz",
             bg=config.PANEL,
             fg=config.ACCENT,
-            font=("DejaVu Sans Mono", 28, "bold"),
-            pady=18,
+            font=("DejaVu Sans Mono", 22, "bold"),
+            pady=5,
         )
         self.frequency_label.pack(fill="x", pady=(5, 3))
 
@@ -133,10 +171,10 @@ class AirbandScreen(tk.Frame):
             highlightthickness=1,
             highlightbackground=config.DIM_TEXT,
         )
-        volume_panel.pack(fill="x", pady=(4, 8))
+        volume_panel.pack(fill="x", pady=(2, 4))
 
         volume_header = tk.Frame(volume_panel, bg=config.PANEL)
-        volume_header.pack(fill="x", padx=12, pady=(7, 0))
+        volume_header.pack(fill="x", padx=10, pady=(4, 0))
 
         tk.Label(
             volume_header,
@@ -175,12 +213,12 @@ class AirbandScreen(tk.Frame):
         self.volume_slider.set(self.volume)
         self.volume_slider.pack(
             fill="x",
-            padx=12,
-            pady=(2, 8),
+            padx=10,
+            pady=(0, 4),
         )
 
         controls = tk.Frame(body, bg=config.BACKGROUND)
-        controls.pack(fill="x", pady=8)
+        controls.pack(fill="x", pady=4)
 
         self.control_button(
             controls,
@@ -206,26 +244,47 @@ class AirbandScreen(tk.Frame):
             lambda: self.change_frequency(0.025),
         ).pack(side="left", expand=True, fill="x", padx=4)
 
-        self.stop_button = self.control_button(
+        action_row = tk.Frame(
             body,
-            "STOP RECEIVER",
+            bg=config.BACKGROUND,
+        )
+        action_row.pack(fill="x", pady=(2, 4))
+
+        self.stop_button = self.control_button(
+            action_row,
+            "STOP",
             self.stop_listening,
         )
-        self.stop_button.pack(fill="x", pady=(2, 4))
+        self.stop_button.pack(
+            side="left",
+            expand=True,
+            fill="x",
+            padx=(0, 3),
+        )
 
         self.record_button = self.control_button(
-            body,
-            "START RECORDING",
+            action_row,
+            "RECORD",
             self.toggle_recording,
         )
-        self.record_button.pack(fill="x", pady=(0, 4))
+        self.record_button.pack(
+            side="left",
+            expand=True,
+            fill="x",
+            padx=3,
+        )
 
         self.recordings_button = self.control_button(
-            body,
-            "RECORDINGS",
+            action_row,
+            "FILES",
             self.open_recordings,
         )
-        self.recordings_button.pack(fill="x", pady=(0, 6))
+        self.recordings_button.pack(
+            side="left",
+            expand=True,
+            fill="x",
+            padx=(3, 0),
+        )
 
         self.message = tk.Label(
             body,
@@ -234,7 +293,7 @@ class AirbandScreen(tk.Frame):
             fg=config.DIM_TEXT,
             font=("DejaVu Sans", 9, "bold"),
         )
-        self.message.pack(pady=10)
+        self.message.pack(pady=4)
 
         self.frequency = 121.500
 
@@ -276,8 +335,8 @@ class AirbandScreen(tk.Frame):
             activeforeground="#000000",
             relief="flat",
             bd=0,
-            font=("DejaVu Sans", 13, "bold"),
-            pady=12,
+            font=("DejaVu Sans", 11, "bold"),
+            pady=7,
             cursor="none",
         )
 
@@ -734,7 +793,7 @@ class AirbandScreen(tk.Frame):
 
             self.recording = True
             self.record_button.config(
-                text="STOP RECORDING",
+                text="STOP REC",
                 bg=config.DANGER,
                 fg="white",
             )
