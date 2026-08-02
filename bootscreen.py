@@ -1,5 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
+from PIL import Image, ImageTk
+from pathlib import Path
 
 
 class BootScreen:
@@ -11,15 +13,18 @@ class BootScreen:
         self.frame = tk.Frame(root, bg="black", cursor="none")
         self.frame.pack(fill="both", expand=True)
 
+        logo_path = Path(__file__).parent / "assets" / "falcondeck_logo_800x480.png"
+
+        image = Image.open(logo_path)
+        self.logo_image = ImageTk.PhotoImage(image)
+
         self.logo = tk.Label(
             self.frame,
-            text="FALCONDECK",
-            fg="#00eaff",
+            image=self.logo_image,
             bg="black",
-            font=("DejaVu Sans", 36, "bold"),
-            cursor="none",
+            borderwidth=0,
         )
-        self.logo.pack(pady=(120, 20))
+        self.logo.pack(expand=True)
 
         self.status = tk.Label(
             self.frame,
@@ -27,9 +32,8 @@ class BootScreen:
             fg="white",
             bg="black",
             font=("DejaVu Sans", 14, "bold"),
-            cursor="none",
         )
-        self.status.pack()
+        self.status.pack(pady=(0, 20))
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -50,7 +54,7 @@ class BootScreen:
             maximum=100,
             style="Falcon.Horizontal.TProgressbar",
         )
-        self.progress.pack(pady=40)
+        self.progress.pack(pady=(0, 40))
 
         self.animate()
 
@@ -58,7 +62,7 @@ class BootScreen:
         if self.value <= 100:
             self.progress["value"] = self.value
             self.value += 2
-            self.root.after(70, self.animate)
+            self.root.after(50, self.animate)
         else:
             self.frame.destroy()
             self.finished_callback()
